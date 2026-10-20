@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{SITE_NAME}}</title>
+<link rel="icon" id="fav" href="data:,">
+<style>
+:root{
+  --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+  --on:#16a34a;--on-bg:#dcfce7;--off:#dc2626;--off-bg:#fee2e2;--off-mid:#f87171;--warn:#b45309;--warn-bg:#fef3c7;
+  --idle:#6b7280;--idle-bg:#f3f4f6;--bar:#eef0f3;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0b0f14;--card:#141a21;--text:#e5e7eb;--muted:#9ca3af;--line:#232b35;
+  --on:#22c55e;--on-bg:#0f2a1a;--off:#f87171;--off-bg:#3a1414;--off-mid:#b93a3a;--warn:#fbbf24;--warn-bg:#3a2a0b;
+  --idle:#9ca3af;--idle-bg:#1d242d;--bar:#1d242d;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:760px;margin:0 auto;padding:16px 16px 40px}
+header{display:flex;justify-content:space-between;align-items:baseline;margin:4px 2px 14px}
+h1{font-size:1.05rem;margin:0;font-weight:600}
+h3{font-size:.95rem;margin:0}
+.small{font-size:.8rem;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px}
+#hero{padding:24px 22px;display:flex;gap:18px;align-items:center;border-width:2px}
+#hero .dot{flex:none;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-size:28px}
+#hero h2{margin:0;font-size:2rem;line-height:1.1;letter-spacing:-.01em}
+#hero p{margin:6px 0 0}
+#hero p+p{margin-top:2px;color:var(--muted);font-size:.9rem}
+.on{border-color:var(--on)!important}.on .dot{background:var(--on-bg);color:var(--on)}.on h2{color:var(--on)}
+.off{border-color:var(--off)!important}.off .dot{background:var(--off-bg);color:var(--off)}.off h2{color:var(--off)}
+.warn{border-color:var(--warn)!important}.warn .dot{background:var(--warn-bg);color:var(--warn)}.warn h2{color:var(--warn)}
+.idle .dot{background:var(--idle-bg);color:var(--idle)}
+.off .dot{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.off .dot{animation:none}}
+nav{display:flex;gap:6px;margin:22px 0 8px}
+nav button{flex:1;min-width:0;padding:9px 0;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;font:inherit;font-size:.9rem;cursor:pointer}
+nav button[aria-pressed=true]{background:var(--text);color:var(--card);border-color:var(--text)}
+#range{height:58px;margin-bottom:6px}
+#win{text-align:center;margin-bottom:12px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:560px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.stat{padding:11px 13px}
+.stat b{display:block;font-size:clamp(1.05rem,4.6vw,1.3rem);white-space:nowrap;font-variant-numeric:tabular-nums}
+.stat .small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chart{padding:14px 12px 6px;margin-top:12px}
+.chart header{margin:0 4px 2px;display:block}
+.chart .c{height:200px;display:grid;place-items:center;color:var(--muted);font-size:.85rem}
+#list{margin-top:18px}
+.day{margin:18px 2px 6px;font-size:.85rem;font-weight:600;color:var(--muted)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .t{font-variant-numeric:tabular-nums}
+.badge{flex:none;font-size:.8rem;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--off-bg);color:var(--off);font-variant-numeric:tabular-nums}
+.row.live .badge{background:var(--off);color:#fff}
+.row.inf .badge{background:var(--idle-bg);color:var(--idle)}
+.empty{padding:22px;text-align:center;color:var(--muted)}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;padding:6px 14px;font:inherit;font-size:.85rem;cursor:pointer}
+.day .chip{padding:3px 10px;font-size:.8rem;margin-left:6px}
+#more{display:block;margin:14px auto 0}
+footer{margin-top:28px;text-align:center}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>{{SITE_NAME}}</h1><span class="small" id="upd"></span></header>
+
+  <section id="hero" class="card idle" aria-live="polite">
+    <div class="dot" aria-hidden="true">⚡</div>
+    <div><h2 id="h">Checking…</h2><p id="sub1">&nbsp;</p><p id="sub2"></p></div>
+  </section>
+
+  <nav id="presets" aria-label="Time range">
+    <button data-d="1">24h</button><button data-d="7">7 days</button><button data-d="30">30 days</button><button data-d="90">90 days</button><button data-d="0">All</button>
+  </nav>
+  <div id="range" aria-label="Drag the handles to choose a custom time window"></div>
+  <div id="win" class="small"></div>
+
+  <div class="stats" id="stats"></div>
+
+  <section class="card chart"><header><h3>Power on / off</h3><span class="small">High = power on, low = outage. Hover or tap for times.</span></header><div class="c" id="c-step">Loading chart…</div></section>
+  <section class="card chart"><header><h3>Outages per day</h3><span class="small">Bars: total time without power · line: number of outages. Tap a day to list its outages.</span></header><div class="c" id="c-daily">Loading chart…</div></section>
+  <section class="card chart"><header><h3>Outage timeline</h3><span class="small" id="tl-sub">When each outage happened and how long it lasted.</span></header><div class="c" id="c-timeline">Loading chart…</div></section>
+  <section class="card chart"><header><h3>Uptime trend</h3><span class="small">Share of each day with power.</span></header><div class="c" id="c-uptime">Loading chart…</div></section>
+  <section class="card chart"><header><h3>Calendar</h3><span class="small">Each square is a day, coloured by time without power. Shows whole months.</span></header><div class="c" id="c-cal">Loading chart…</div></section>
+  <section class="card chart"><header><h3>Weekly pattern</h3><span class="small">Total time without power by weekday and hour. Darker = more.</span></header><div class="c" id="c-heat">Loading chart…</div></section>
+  <section class="card chart"><header><h3>When outages start</h3><span class="small">Number of outages starting in each hour of the day.</span></header><div class="c" id="c-hour">Loading chart…</div></section>
+  <section class="card chart"><header><h3>How long outages last</h3><span class="small">Outages grouped by length.</span></header><div class="c" id="c-dur">Loading chart…</div></section>
+
+  <div id="list"></div>
+
+  <footer class="small" id="foot"></footer>
+</main>
+
+<script id="boot" type="application/json">{{BOOT}}</script>
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const B = JSON.parse($('boot').textContent), SITE = document.querySelector('h1').textContent;
+let S = B.status, O = B.outages, netErr = false, lastLoad = Date.now();
+let skew = S.now - Date.now() / 1000;
+const now = () => Date.now() / 1000 + skew;
+
+// ---------- formatting ----------
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (h < 1) return m + 'm';
+  if (d < 1) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+  return d + 'd' + (h % 24 ? ' ' + (h % 24) + 'h' : '');
+}
+const tf = new Intl.DateTimeFormat([], {hour: 'numeric', minute: '2-digit'});
+const hf = new Intl.DateTimeFormat([], {hour: 'numeric'});
+const df = new Intl.DateTimeFormat([], {weekday: 'short', day: 'numeric', month: 'short'});
+const sdf = new Intl.DateTimeFormat([], {day: 'numeric', month: 'short'});
+const time = ts => tf.format(ts * 1000);
+const hourName = h => hf.format(new Date(2024, 0, 1, h));
+const midnight = ts => { const d = new Date(ts * 1000); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
+const addDays = (ts, n) => { const d = new Date(ts * 1000); d.setDate(d.getDate() + n); return d.getTime() / 1000; };
+function dayName(ts) {
+  const t = midnight(now()), m = midnight(ts);
+  if (m === t) return 'Today';
+  if (m === addDays(t, -1)) return 'Yesterday';
+  return df.format(ts * 1000);
+}
+const when = ts => (midnight(ts) === midnight(now()) ? '' : dayName(ts) + ', ') + time(ts);
+const isoDay = ts => { const d = new Date(ts * 1000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const end = o => o[1] ?? now();
+const overlap = (o, a, b) => Math.max(0, Math.min(end(o), b) - Math.max(o[0], a));
+const pct = u => (u >= 99.995 ? '100' : u.toFixed(u >= 99.9 ? 2 : 1)) + '%';
+
+// ---------- time window shared by every chart ----------
+const dataStart = () => O.reduce((m, o) => Math.min(m, o[0]), S.tracking_since);
+let preset = 7, W = null, filter = null, listLimit = 100;
+try { const d = localStorage.getItem('range'); if (d !== null && [0, 1, 7, 30, 90].includes(+d)) preset = +d; } catch (e) {}
+const presetWindow = d => { const t = now(); return {from: d ? t - d * 86400 : dataStart(), to: t, live: true}; };
+W = presetWindow(preset);
+
+// Hourly buckets for short windows, local calendar days otherwise.
+function buckets() {
+  const out = [];
+  if (W.to - W.from <= 2 * 86400) {
+    for (let a = Math.floor(W.from / 3600) * 3600; a < W.to; a += 3600) out.push([a, a + 3600]);
+    return {hourly: true, list: out};
+  }
+  for (let a = midnight(W.from); a < W.to; ) { const b = addDays(a, 1); out.push([a, b]); a = b; }
+  return {hourly: false, list: out};
+}
+const inWindow = () => O.filter(o => overlap(o, W.from, W.to) > 0);
+
+// ---------- status card ----------
+function renderHero() {
+  const t = now(), stale = S.checked == null || t - S.checked > Math.max(30, S.poll * 6);
+  let cls, icon, h, s1, s2, title;
+  if (netErr || (stale && S.state !== 'unknown')) {
+    cls = 'warn'; icon = '!'; h = 'Status unavailable';
+    s1 = netErr ? "Can't reach the status server. Retrying…" : 'Monitor last checked ' + dur(t - S.checked) + ' ago';
+    s2 = ''; title = '⚠️ ' + h;
+  } else if (S.state === 'on') {
+    cls = 'on'; icon = '⚡'; h = 'Power is ON'; title = '🟢 Power ON';
+    const last = O.find(o => o[1] != null);
+    if (last) {
+      s1 = 'Last outage ended ' + (midnight(last[1]) === midnight(t) ? 'today at ' + time(last[1]) : when(last[1])) + ' · lasted ' + dur(last[1] - last[0]);
+      s2 = 'On for ' + dur(t - last[1]);
+    } else {
+      s1 = 'No outages recorded'; s2 = 'Monitoring since ' + df.format(S.tracking_since * 1000);
+    }
+  } else if (S.state === 'off') {
+    cls = 'off'; icon = '⏻'; h = 'Power is OUT'; title = '🔴 Power OUT';
+    s1 = 'No power since ' + (midnight(S.since) === midnight(t) ? time(S.since) + ' today' : when(S.since));
+    s2 = 'Out for ' + dur(t - S.since) + ' so far';
+  } else {
+    cls = 'idle'; icon = '…'; h = 'Checking…'; s1 = 'Waiting for the first reading'; s2 = ''; title = 'Checking…';
+  }
+  const hero = $('hero');
+  hero.className = 'card ' + cls;
+  hero.firstElementChild.textContent = icon;
+  $('h').textContent = h; $('sub1').textContent = s1; $('sub2').textContent = s2;
+  document.title = title + ' · ' + SITE;
+  const col = css(cls === 'idle' ? 'idle' : cls);
+  const fav = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${col}"/></svg>`);
+  if ($('fav').href !== fav) $('fav').href = fav;
+  $('upd').textContent = S.checked ? 'checked ' + dur(Math.max(0, t - S.checked)) + ' ago' : '';
+}
+
+// ---------- stats ----------
+function renderStats() {
+  const os = inWindow().sort((a, b) => a[0] - b[0]);
+  const from = Math.max(W.from, dataStart()), span = Math.max(1, W.to - from);
+  const down = os.reduce((s, o) => s + overlap(o, W.from, W.to), 0);
+  const lens = os.map(o => end(o) - o[0]);
+  let longest = null;
+  for (const o of os) if (!longest || end(o) - o[0] > end(longest) - longest[0]) longest = o;
+  // Stretches with power: gaps between outages inside the window, plus both edges.
+  const gaps = [], between = [];
+  let cur = from;
+  for (const o of os) { if (o[0] > cur) gaps.push(o[0] - cur); cur = Math.max(cur, end(o)); }
+  if (W.to > cur) gaps.push(W.to - cur);
+  for (let i = 1; i < os.length; i++) between.push(Math.max(0, os[i][0] - end(os[i - 1])));
+  const avg = a => a.reduce((s, x) => s + x, 0) / a.length;
+  const tiles = [
+    ['Outages', os.length, (os.length / (span / 86400)).toFixed(1) + ' per day'],
+    ['Without power', down ? dur(down) : '0m', 'in total'],
+    ['Uptime', pct(100 * (1 - down / span)), 'of the time'],
+    ['Average outage', lens.length ? dur(avg(lens)) : '–', 'per outage'],
+    ['Longest outage', longest ? dur(end(longest) - longest[0]) : '–', longest ? dayName(longest[0]) + ', ' + time(longest[0]) : 'none'],
+    ['Longest with power', gaps.length ? dur(Math.max(...gaps)) : '–', 'without a cut'],
+    ['Time between outages', between.length ? dur(avg(between)) : '–', 'on average'],
+    ['Outage days', new Set(os.map(o => isoDay(o[0]))).size, 'days with a cut'],
+  ];
+  $('stats').replaceChildren(...tiles.map(([label, v, sub]) => {
+    const t = el('div', 'card stat');
+    t.append(el('span', 'small', label), el('b', null, v), el('span', 'small', sub));
+    return t;
+  }));
+  const fmt = ts => sdf.format(ts * 1000) + (W.to - W.from <= 2 * 86400 ? ' ' + time(ts) : '');
+  $('win').textContent = 'Showing ' + fmt(W.from) + ' → ' + (W.live ? 'now' : fmt(W.to));
+}
+
+// ---------- outage list ----------
+function renderList() {
+  const t = now();
+  const shown = filter ? O.filter(o => overlap(o, filter[0], filter[1]) > 0) : inWindow();
+  const list = $('list');
+  list.replaceChildren();
+  if (filter) {
+    const p = el('div', 'day', 'Outages on ' + (filter[1] - filter[0] <= 3600 ? dayName(filter[0]) + ', ' + time(filter[0]) : dayName(filter[0])));
+    const c = el('button', 'chip', 'Show all ✕');
+    c.onclick = () => { filter = null; renderList(); };
+    p.append(c); list.append(p);
+  } else {
+    list.append(el('div', 'day', 'All outages in this period'));
+  }
+  if (!shown.length) list.append(el('div', 'card empty', 'No outages in this period 🎉'));
+  let group = null, card = null;
+  for (const o of shown.slice(0, listLimit)) {
+    const g = dayName(o[0]);
+    if (g !== group) { group = g; card = el('div', 'card'); list.append(el('div', 'day', g), card); }
+    const live = o[1] == null, r = el('div', 'row' + (live ? ' live' : '') + (o[2] ? ' inf' : ''));
+    const e = live ? 'now' : (midnight(o[1]) === midnight(o[0]) ? time(o[1]) : when(o[1]));
+    const left = el('div');
+    left.append(el('div', 't', time(o[0]) + ' → ' + e));
+    if (o[2]) left.append(el('div', 'small', 'Monitor was offline · start time approximate'));
+    r.append(left, el('span', 'badge', live ? 'ongoing · ' + dur(t - o[0]) : dur(o[1] - o[0])));
+    card.append(r);
+  }
+  if (shown.length > listLimit) {
+    const m = el('button', 'chip', 'Show ' + Math.min(100, shown.length - listLimit) + ' more');
+    m.id = 'more'; m.onclick = () => { listLimit += 100; renderList(); };
+    list.append(m);
+  }
+  $('foot').textContent = 'Checks every ' + S.poll + 's · history since ' + df.format(dataStart() * 1000);
+}
+
+// ---------- charts (ECharts, loaded after first paint) ----------
+let ec = null;
+const C = {};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue('--' + n).trim();
+function readColors() { for (const n of ['text', 'muted', 'line', 'card', 'on', 'on-bg', 'off', 'off-bg', 'off-mid', 'idle', 'bar']) C[n] = css(n); }
+const narrow = () => innerWidth < 560;
+const tooltip = extra => Object.assign({confine: true, backgroundColor: C.card, borderColor: C.line, textStyle: {color: C.text, fontSize: 13},
+  extraCssText: 'box-shadow:0 4px 14px rgba(0,0,0,.15);border-radius:10px'}, extra);
+const base = extra => Object.assign({
+  animation: false,
+  textStyle: {color: C.muted, fontFamily: 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif'},
+  grid: {left: 8, right: 14, top: 14, bottom: 4, containLabel: true},
+}, extra);
+const axis = extra => Object.assign({axisLine: {lineStyle: {color: C.line}}, axisTick: {show: false},
+  splitLine: {lineStyle: {color: C.line, type: 'dashed'}}, axisLabel: {color: C.muted, hideOverlap: true}}, extra);
+const tip = (title, lines) => '<b>' + title + '</b>' + lines.map(l => '<br>' + l).join('');
+
+const charts = {
+  step() {
+    const os = inWindow().sort((a, b) => a[0] - b[0]);
+    const stateAt = t => os.some(o => o[0] <= t && t < end(o)) ? 0 : 1;
+    // Transition points plus evenly spaced samples so the tooltip works anywhere on the line.
+    const pts = [[W.from, stateAt(W.from)]];
+    for (const o of os) {
+      if (o[0] > W.from) pts.push([o[0], 0]);
+      if (end(o) < W.to) pts.push([end(o), 1]);
+    }
+    for (let i = 1; i < 300; i++) { const t = W.from + (W.to - W.from) * i / 300; pts.push([t, stateAt(t)]); }
+    pts.push([W.to, stateAt(W.to - 1)]);
+    pts.sort((a, b) => a[0] - b[0]);
+    return base({
+      tooltip: tooltip({trigger: 'axis', formatter: ps => {
+        const t = ps[0].value[0] / 1000, o = os.find(o => o[0] <= t && t < end(o));
+        if (!o) return tip('🟢 Power on', [dayName(t) + ', ' + time(t)]);
+        return tip('🔴 Power off', [when(o[0]) + ' → ' + (o[1] == null ? 'now' : time(o[1])), 'Lasted ' + dur(end(o) - o[0]) + (o[1] == null ? ' so far' : '')]);
+      }}),
+      xAxis: axis({type: 'time', min: W.from * 1000, max: W.to * 1000, splitLine: {show: false}}),
+      yAxis: axis({type: 'value', min: 0, max: 1, interval: 1, axisLabel: {color: C.muted, formatter: v => v ? 'On' : 'Off'}}),
+      series: [{type: 'line', step: 'end', symbol: 'none', lineStyle: {width: 2, color: C.on}, itemStyle: {color: C.on},
+        areaStyle: {color: C.on, opacity: 0.15},
+        data: pts.map(p => [p[0] * 1000, p[1]]),
+        markArea: {silent: true, itemStyle: {color: C.off, opacity: 0.35},
+          data: os.map(o => [{xAxis: Math.max(o[0], W.from) * 1000}, {xAxis: Math.min(end(o), W.to) * 1000}])}}],
+    });
+  },
+
+  daily() {
+    const {hourly, list} = buckets();
+    const rows = list.map(([a, b]) => ({a, b,
+      n: O.filter(o => o[0] >= a && o[0] < b).length,
+      d: O.reduce((s, o) => s + overlap(o, a, b), 0)}));
+    const label = a => hourly ? hourName(new Date(a * 1000).getHours()) : sdf.format(a * 1000);
+    return base({
+      grid: {left: 8, right: 8, top: 26, bottom: 4, containLabel: true},
+      tooltip: tooltip({trigger: 'axis', axisPointer: {type: 'shadow'}, formatter: ps => {
+        const r = rows[ps[0].dataIndex];
+        return tip(hourly ? dayName(r.a) + ', ' + time(r.a) + '–' + time(r.b) : dayName(r.a),
+          ['Outages: <b>' + r.n + '</b>', 'Without power: <b>' + (r.d ? dur(r.d) : 'none') + '</b>']);
+      }}),
+      xAxis: axis({type: 'category', data: rows.map(r => label(r.a)), splitLine: {show: false}}),
+      yAxis: [
+        axis({type: 'value', name: 'downtime', nameTextStyle: {color: C.muted, align: 'left'},
+              axisLabel: {color: C.muted, formatter: v => v ? dur(v * 3600) : '0'}}),
+        axis({type: 'value', name: 'outages', nameTextStyle: {color: C.muted, align: 'right'}, minInterval: 1, splitLine: {show: false}}),
+      ],
+      series: [
+        {type: 'bar', data: rows.map(r => r.d / 3600), itemStyle: {color: C.off, borderRadius: [3, 3, 0, 0]}, barMaxWidth: 18},
+        {type: 'line', yAxisIndex: 1, data: rows.map(r => r.n), symbol: 'circle', symbolSize: 5, showSymbol: rows.length <= 45,
+         lineStyle: {color: C.text, width: 1.5}, itemStyle: {color: C.text}},
+      ],
+    });
+  },
+
+  timeline(elm) {
+    const MAX = 120, days = [];
+    for (let a = midnight(W.to); a >= midnight(W.from) && days.length < MAX; a = addDays(a, -1)) days.push(a);
+    $('tl-sub').textContent = 'When each outage happened and how long it lasted' + (days.length === MAX ? ' (latest ' + MAX + ' days).' : '.');
+    const idx = new Map(days.map((d, i) => [d, i])), data = [];
+    for (const o of O) {
+      // Split outages that cross midnight into one block per day.
+      for (let a = midnight(o[0]); a < end(o); a = addDays(a, 1)) {
+        if (!idx.has(a)) continue;
+        const b = addDays(a, 1), s = Math.max(o[0], a), e = Math.min(end(o), b);
+        if (e > s) data.push([idx.get(a), (s - a) / 3600, (e - a) / 3600, o[0], o[1], o[2]]);
+      }
+    }
+    elm.style.height = Math.max(120, days.length * 20 + 40) + 'px';
+    return base({
+      tooltip: tooltip({trigger: 'item', formatter: p => {
+        const [, , , s, e, inf] = p.value;
+        return tip(dayName(s), [time(s) + ' → ' + (e == null ? 'now' : when(e)),
+          'Lasted ' + dur((e ?? now()) - s) + (e == null ? ' so far' : '')].concat(inf ? ['<i>Monitor was offline; start approximate</i>'] : []));
+      }}),
+      xAxis: axis({type: 'value', min: 0, max: 24, interval: narrow() ? 6 : 3, axisLabel: {color: C.muted, formatter: v => v === 24 ? '' : hourName(v)}}),
+      yAxis: axis({type: 'category', inverse: true, data: days.map(d => dayName(d)), splitLine: {show: true, lineStyle: {color: C.line, opacity: 0.5}},
+        axisLabel: {color: C.muted, fontSize: 11, interval: days.length > 40 ? 6 : 0}}),
+      series: [{type: 'custom', encode: {x: [1, 2], y: 0}, data, renderItem: (params, api) => {
+        const a = api.coord([api.value(1), api.value(0)]), b = api.coord([api.value(2), api.value(0)]);
+        const h = Math.max(4, api.size([0, 1])[1] * 0.6), cs = params.coordSys;
+        const shape = ec.graphic.clipRectByRect({x: a[0], y: a[1] - h / 2, width: Math.max(3, b[0] - a[0]), height: h},
+          {x: cs.x, y: cs.y, width: cs.width, height: cs.height});
+        return shape && {type: 'rect', shape: Object.assign(shape, {r: 2}), style: {fill: api.value(5) ? C.idle : C.off}};
+      }}],
+    });
+  },
+
+  uptime() {
+    const {hourly, list} = buckets(), t = now(), start = dataStart();
+    const rows = list.map(([a, b]) => {
+      const lo = Math.max(a, start), hi = Math.min(b, t);
+      if (hi <= lo) return {a, u: null};
+      return {a, u: 100 * (1 - O.reduce((s, o) => s + overlap(o, lo, hi), 0) / (hi - lo))};
+    });
+    const vals = rows.map(r => r.u).filter(u => u != null);
+    const lo = vals.length ? Math.max(0, Math.floor(Math.min(...vals) / 5) * 5) : 0;
+    return base({
+      grid: {left: 8, right: 24, top: 14, bottom: 4, containLabel: true},
+      tooltip: tooltip({trigger: 'axis', formatter: ps => {
+        const r = rows[ps[0].dataIndex];
+        return tip(hourly ? dayName(r.a) + ', ' + time(r.a) : dayName(r.a), [r.u == null ? 'No data' : 'Uptime: <b>' + pct(r.u) + '</b>']);
+      }}),
+      xAxis: axis({type: 'category', boundaryGap: false, splitLine: {show: false},
+        data: rows.map(r => hourly ? hourName(new Date(r.a * 1000).getHours()) : sdf.format(r.a * 1000))}),
+      yAxis: axis({type: 'value', min: lo === 100 ? 95 : lo, max: 100, axisLabel: {color: C.muted, formatter: '{value}%'}}),
+      series: [{type: 'line', data: rows.map(r => r.u), symbol: 'circle', symbolSize: 5, showSymbol: rows.length <= 45,
+        lineStyle: {color: C.on, width: 2}, itemStyle: {color: C.on}, areaStyle: {color: C.on, opacity: 0.12}}],
+    });
+  },
+
+  cal(elm) {
+    // Whole months covering the window (at most about a year), so the grid always reads as a calendar.
+    const t = now(), sd = new Date(Math.max(W.from, addDays(midnight(t), -365)) * 1000);
+    const start = new Date(sd.getFullYear(), sd.getMonth(), 1).getTime() / 1000;
+    const ed = new Date(W.to * 1000), stop = new Date(ed.getFullYear(), ed.getMonth() + 1, 0).getTime() / 1000;
+    const first = Math.max(start, midnight(dataStart())), data = [];
+    for (let a = first; a <= t; a = addDays(a, 1)) data.push([isoDay(a), O.reduce((s, o) => s + overlap(o, a, addDays(a, 1)), 0) / 3600]);
+    const weeks = Math.ceil((Math.round((stop - start) / 86400) + 1) / 7) + 1;
+    const w = elm.clientWidth || 600;
+    let cell = Math.floor((w - 50) / weeks), orient = 'horizontal';
+    if (cell < 11) { orient = 'vertical'; cell = Math.floor((w - 70) / 7); }
+    cell = Math.min(cell, 30);
+    const horiz = orient === 'horizontal';
+    elm.style.height = (horiz ? 7 * cell + 90 : weeks * cell + 90) + 'px';
+    const wd = new Intl.DateTimeFormat([], {weekday: 'narrow'}), mf = new Intl.DateTimeFormat([], {month: 'short'});
+    return base({
+      tooltip: tooltip({trigger: 'item', formatter: p => {
+        const [y, m, d] = p.value[0].split('-').map(Number), a = new Date(y, m - 1, d).getTime() / 1000;
+        return tip(dayName(a), [p.value[1] ? 'Without power: <b>' + dur(p.value[1] * 3600) + '</b>' : 'No outages']);
+      }}),
+      visualMap: {type: 'piecewise', orient: 'horizontal', left: 'center', bottom: 0, itemWidth: 12, itemHeight: 12, itemGap: 8,
+        textStyle: {color: C.muted, fontSize: 11},
+        pieces: [{value: 0, label: 'none', color: C['on-bg']}, {gt: 0, lte: 0.5, label: '< 30m', color: C['off-bg']},
+                 {gt: 0.5, lte: 2, label: '< 2h', color: C['off-mid']}, {gt: 2, label: '2h +', color: C.off}]},
+      calendar: {range: [isoDay(start), isoDay(stop)], orient, cellSize: cell, top: horiz ? 24 : 30,
+        left: horiz ? 36 : 'center',
+        splitLine: {show: false}, itemStyle: {color: C.bar, borderColor: C.card, borderWidth: 2},
+        dayLabel: {firstDay: 1, color: C.muted, fontSize: 10, nameMap: [...Array(7)].map((_, i) => wd.format(new Date(2024, 0, 7 + i)))},
+        monthLabel: {color: C.muted, fontSize: 11, nameMap: [...Array(12)].map((_, i) => mf.format(new Date(2024, i, 1)))},
+        yearLabel: {show: false}},
+      series: [{type: 'heatmap', coordinateSystem: 'calendar', data}],
+    });
+  },
+
+  heat(elm) {
+    // Minutes without power per (weekday, hour), Monday first.
+    const grid = [...Array(7)].map(() => Array(24).fill(0));
+    for (const o of inWindow()) {
+      const s = Math.max(o[0], W.from), e = Math.min(end(o), W.to);
+      for (let a = Math.floor(s / 3600) * 3600; a < e; a += 3600) {
+        const d = new Date(a * 1000);
+        grid[(d.getDay() + 6) % 7][d.getHours()] += (Math.min(e, a + 3600) - Math.max(s, a)) / 60;
+      }
+    }
+    const wf = new Intl.DateTimeFormat([], {weekday: 'short'}), names = [...Array(7)].map((_, i) => wf.format(new Date(2024, 0, 1 + i)));
+    const data = [];
+    let max = 0;
+    grid.forEach((row, wd) => row.forEach((m, h) => { data.push([h, wd, Math.round(m)]); max = Math.max(max, m); }));
+    elm.style.height = '250px';
+    return base({
+      grid: {left: 8, right: 8, top: 6, bottom: 4, containLabel: true},
+      tooltip: tooltip({trigger: 'item', formatter: p => {
+        const [h, wd, m] = p.value;
+        return tip(names[wd] + ' ' + hourName(h) + '–' + hourName((h + 1) % 24), [m ? 'Without power: <b>' + dur(m * 60) + '</b> in total' : 'No outages']);
+      }}),
+      xAxis: axis({type: 'category', data: [...Array(24)].map((_, h) => hourName(h)), splitLine: {show: false}, axisLabel: {color: C.muted, interval: narrow() ? 5 : 2}}),
+      yAxis: axis({type: 'category', inverse: true, data: names, splitLine: {show: false}}),
+      visualMap: {show: false, min: 0, max: Math.max(1, max), inRange: {color: [C.bar, C['off-mid'], C.off]}},
+      series: [{type: 'heatmap', data, itemStyle: {borderColor: C.card, borderWidth: 1.5, borderRadius: 3}}],
+    });
+  },
+
+  hour() {
+    const counts = Array(24).fill(0);
+    for (const o of O) if (o[0] >= W.from && o[0] < W.to) counts[new Date(o[0] * 1000).getHours()]++;
+    return base({
+      grid: {left: 8, right: 8, top: 14, bottom: 4, containLabel: true},
+      tooltip: tooltip({trigger: 'axis', axisPointer: {type: 'shadow'}, formatter: ps => {
+        const h = ps[0].dataIndex;
+        return tip(hourName(h) + '–' + hourName((h + 1) % 24), ['<b>' + counts[h] + '</b> outage' + (counts[h] === 1 ? '' : 's') + ' started']);
+      }}),
+      xAxis: axis({type: 'category', data: counts.map((_, h) => hourName(h)), splitLine: {show: false}, axisLabel: {color: C.muted, interval: narrow() ? 5 : 2}}),
+      yAxis: axis({type: 'value', minInterval: 1}),
+      series: [{type: 'bar', data: counts, itemStyle: {color: C.off, borderRadius: [3, 3, 0, 0]}}],
+    });
+  },
+
+  dur(elm) {
+    const groups = [['Under 5 min', 0, 300], ['5–30 min', 300, 1800], ['30 min – 2 h', 1800, 7200], ['Over 2 h', 7200, Infinity]];
+    const os = inWindow();
+    const rows = groups.map(([name, lo, hi]) => {
+      const g = os.filter(o => { const d = end(o) - o[0]; return d >= lo && d < hi; });
+      return {name, n: g.length, d: g.reduce((s, o) => s + end(o) - o[0], 0)};
+    });
+    elm.style.height = '180px';
+    return base({
+      grid: {left: 8, right: 40, top: 6, bottom: 4, containLabel: true},
+      tooltip: tooltip({trigger: 'axis', axisPointer: {type: 'shadow'}, formatter: ps => {
+        const r = rows[ps[0].dataIndex];
+        return tip(r.name, ['<b>' + r.n + '</b> outage' + (r.n === 1 ? '' : 's'), 'Total: ' + (r.d ? dur(r.d) : 'none')]);
+      }}),
+      xAxis: axis({type: 'value', minInterval: 1}),
+      yAxis: axis({type: 'category', inverse: true, data: rows.map(r => r.name), splitLine: {show: false}}),
+      series: [{type: 'bar', data: rows.map(r => r.n), barMaxWidth: 22, itemStyle: {color: C.off, borderRadius: [0, 3, 3, 0]},
+        label: {show: true, position: 'right', color: C.text}}],
+    });
+  },
+};
+
+// Charts are created when scrolled near and re-drawn only while visible; off-screen ones redraw when they come back.
+const inst = {}, visible = new Set(), dirty = new Set(Object.keys(charts));
+function draw(name) {
+  const elm = $('c-' + name);
+  if (!inst[name]) {
+    elm.textContent = ''; elm.style.display = 'block';
+    inst[name] = ec.init(elm, null, {renderer: 'canvas'});
+    if (name === 'daily') inst.daily.getZr().on('click', e => {
+      const p = inst.daily.convertFromPixel({seriesIndex: 0}, [e.offsetX, e.offsetY]);
+      const b = p && buckets().list[Math.round(p[0])];
+      if (!b) return;
+      filter = filter && filter[0] === b[0] ? null : b;
+      renderList();
+      if (filter) $('list').scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+  }
+  const opt = charts[name](elm);
+  inst[name].resize();
+  inst[name].setOption(opt, true);
+  dirty.delete(name);
+}
+function redrawCharts() {
+  if (!ec) return;
+  for (const n of Object.keys(charts)) { dirty.add(n); if (visible.has(n)) safeDraw(n); }
+}
+// One broken chart must never take the rest of the page down with it.
+function safeDraw(n) { try { draw(n); } catch (e) { console.error(n, e); } }
+const io = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  for (const e of entries) {
+    const n = e.target.id.slice(2);
+    if (e.isIntersecting) { visible.add(n); if (ec && dirty.has(n)) safeDraw(n); } else visible.delete(n);
+  }
+}, {rootMargin: '300px'}) : null;
+for (const n of Object.keys(charts)) io ? io.observe($('c-' + n)) : visible.add(n);
+
+// ---------- range slider (drives every chart, the stats and the list) ----------
+let range = null, syncing = false, pending = 0;
+function rangeOption() {
+  const start = dataStart(), t = now(), pts = [];
+  for (let a = midnight(start); a < t; a = addDays(a, 1)) pts.push([a * 1000, O.reduce((s, o) => s + overlap(o, a, addDays(a, 1)), 0)]);
+  if (pts.length < 2) pts.push([t * 1000, 0]);
+  return {
+    animation: false,
+    grid: {left: 14, right: 14, top: 0, height: 0},
+    xAxis: {type: 'time', min: start * 1000, max: t * 1000, show: false},
+    yAxis: {show: false},
+    series: [{type: 'line', data: pts, symbol: 'none', lineStyle: {opacity: 0}, silent: true}],
+    dataZoom: [{type: 'slider', xAxisIndex: 0, filterMode: 'none', top: 4, height: 34, left: 14, right: 14,
+      startValue: W.from * 1000, endValue: W.to * 1000, showDetail: false, brushSelect: false,
+      borderColor: C.line, backgroundColor: C.bar, fillerColor: 'rgba(127,127,127,.18)',
+      handleStyle: {color: C.card, borderColor: C.muted}, moveHandleStyle: {color: C.muted},
+      dataBackground: {lineStyle: {color: C.off, opacity: 0.6}, areaStyle: {color: C.off, opacity: 0.25}},
+      selectedDataBackground: {lineStyle: {color: C.off}, areaStyle: {color: C.off, opacity: 0.45}},
+      textStyle: {color: C.muted}}],
+  };
+}
+function onRange() {
+  if (syncing) return;
+  const dz = range.getOption().dataZoom[0], t = now();
+  W = {from: dz.startValue / 1000, to: Math.min(t, dz.endValue / 1000), live: t - dz.endValue / 1000 < 3600};
+  if (W.live) W.to = t;
+  preset = null; filter = null; listLimit = 100;
+  renderPresets(); renderStats(); renderList();
+  clearTimeout(pending); pending = setTimeout(redrawCharts, 150);
+}
+function syncRange() {
+  if (!range) return;
+  syncing = true;
+  range.setOption(rangeOption(), true);
+  syncing = false;
+}
+
+// ---------- presets ----------
+function renderPresets() {
+  for (const b of $('presets').children) b.setAttribute('aria-pressed', +b.dataset.d === preset ? 'true' : 'false');
+}
+$('presets').onclick = e => {
+  const d = e.target.dataset && e.target.dataset.d;
+  if (d === undefined) return;
+  preset = +d; W = presetWindow(preset); filter = null; listLimit = 100;
+  try { localStorage.setItem('range', d); } catch (err) {}
+  renderAll();
+};
+function renderAll() { renderPresets(); renderHero(); renderStats(); renderList(); syncRange(); redrawCharts(); }
+
+// ---------- live updates ----------
+// Slide a live window forward so "last 7 days" keeps meaning the last 7 days.
+function advance() {
+  if (!W.live) return;
+  const span = W.to - W.from;
+  W = preset != null ? presetWindow(preset) : {from: now() - span, to: now(), live: true};
+}
+async function load() {
+  try {
+    const r = await fetch('api/outages?days=0', {cache: 'no-store'});
+    O = (await r.json()).outages; lastLoad = Date.now();
+    advance(); renderAll();
+  } catch (e) {}
+}
+async function poll() {
+  try {
+    const r = await fetch('api/status', {cache: 'no-store'});
+    const s = await r.json();
+    const changed = s.v !== S.v || s.state !== S.state;
+    S = s; skew = s.now - Date.now() / 1000; netErr = false;
+    if (changed || Date.now() - lastLoad > 300000) await load();
+  } catch (e) { netErr = true; }
+  renderHero();
+}
+
+readColors();
+renderPresets(); renderHero(); renderStats(); renderList();
+setInterval(renderHero, 1000);
+setInterval(() => { if (!document.hidden) poll(); }, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (range) range.resize(); redrawCharts(); }, 200); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); syncRange(); redrawCharts(); renderHero(); });
+
+const sc = document.createElement('script');
+sc.src = B.echarts; sc.async = true;
+sc.onload = () => {
+  ec = window.echarts;
+  range = ec.init($('range'), null, {renderer: 'canvas'});
+  range.setOption(rangeOption());
+  range.on('datazoom', onRange);
+  redrawCharts();
+};
+document.head.append(sc);
+})();
+</script>
+</body>
+</html>

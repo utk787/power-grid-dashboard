@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "description": "Builds the trimmed ECharts bundle served by the dashboard (static/echarts.min.js). Only needed when changing which chart types are used.",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --minify --format=iife --global-name=echarts --legal-comments=none --outfile=../../static/echarts.min.js"
+  },
+  "devDependencies": {
+    "echarts": "5.6.0",
+    "esbuild": "0.25.0"
+  }
+}
