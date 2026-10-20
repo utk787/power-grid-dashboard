@@ -263,6 +263,38 @@ Every chart works from the same in-memory list of outage rows:
 **Theming:** colours are CSS custom properties with a `prefers-color-scheme: dark`
 override. Charts read them at draw time and redraw when the scheme changes.
 
+**Phone layout (≤ 640 px)**
+
+The same page switches to an app-style layout using CSS alone; there is no separate
+mobile page:
+
+- **Tabs:** a bottom tab bar (Now · Trends · Patterns · History) shows one topic at a
+  time.
+
+  | Tab | Shows |
+  |---|---|
+  | Now | Status card, 4 key stats ("More stats" reveals the other 4), the on/off chart, the 3 latest outages |
+  | Trends | Outages per day, outage timeline, uptime trend |
+  | Patterns | Calendar, weekly pattern, start hours, durations |
+  | History | The outage list |
+
+- **How sections are hidden:** each section has a `data-tab` attribute, and
+  `body[data-tab=…]` rules hide the others. Elements without `data-tab` (status card,
+  presets, footer) show on every tab.
+- **Tab links:** the current tab lives in the URL hash (`#trends`), so the phone's
+  Back button moves between tabs and a link can open a specific tab. On desktop the
+  hash has no effect; every section stays visible.
+- **Pinned status:** outside the Now tab, the status card collapses into a slim bar
+  pinned to the top, so the current state is always on screen.
+- **Range controls:** presets use short labels. The drag slider is folded behind a
+  ⇔ "Custom" button and is resized when it opens.
+- **Lazy drawing:** charts on hidden tabs aren't drawn until their tab is opened (the
+  same `IntersectionObserver` lazy-draw), and charts are resized when a tab is shown.
+- **Tap a day:** in "Outages per day", tapping a day switches to History filtered to
+  that day.
+- **iPhone edges:** `viewport-fit=cover` and `env(safe-area-inset-bottom)` keep the
+  tab bar clear of the home indicator.
+
 ## Failure modes
 
 | Situation | Behaviour |

@@ -22,6 +22,11 @@ The page:
 The status card appears from the first response; charts (a trimmed, self-hosted
 ECharts bundle) load afterwards.
 
+**On phones** the page becomes app-style, with a bottom tab bar: **Now** (status, key
+stats, latest outages) · **Trends** · **Patterns** · **History**. The status stays
+pinned at the top of every tab, and each tab has its own link
+(e.g. `http://…:8080/#history`).
+
 ## Quick start
 
 ```bash
@@ -47,7 +52,7 @@ There are three suites, and none need packages installed:
 
 - **Backend:** 53 Python `unittest` tests, covering config loading
 - **Frontend logic:** 24 Node `node:test` tests, run in UTC+5:30 and DST time zones
-- **Browser smoke:** 3 headless-Chrome tests that check every chart renders without
+- **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
 
 See [docs/TESTING.md](docs/TESTING.md) for requirements, running single tests, and
