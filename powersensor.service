@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 User=utkarsh
-WorkingDirectory=/home/utkarsh/powersensor
+WorkingDirectory=/usr/local/smart-home/power-grid-dashboard
 # All settings live in config.ini; restart the service after editing it.
-ExecStart=/usr/bin/python3 /home/utkarsh/powersensor/app.py --config /home/utkarsh/powersensor/config.ini
+ExecStart=/usr/bin/python3 /usr/local/smart-home/power-grid-dashboard/app.py --config /usr/local/smart-home/power-grid-dashboard/config.ini
 Restart=always
 RestartSec=3
 # Exit code 2 = invalid config: stop instead of restarting in a loop (fix config.ini, then start).
