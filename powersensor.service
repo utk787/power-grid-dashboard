@@ -9,7 +9,7 @@ WorkingDirectory=/home/utkarsh/powersensor
 ExecStart=/usr/bin/python3 /home/utkarsh/powersensor/app.py
 Environment=SENSOR_URL=http://192.168.1.249/
 Environment=PORT=8080
-Environment=SITE_NAME=Power Status
+Environment=SITE_NAME=Power Grid Status
 Restart=always
 RestartSec=3
 # Keep the footprint small on the Pi
