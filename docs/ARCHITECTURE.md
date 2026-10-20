@@ -39,7 +39,9 @@ flowchart LR
 | File | Role |
 |---|---|
 | `app.py` | Everything server-side: config, `Store` (SQLite), `Monitor` (poller and state machine), `App` (page rendering, caches), HTTP handler, `main()` |
-| `index.html` | The whole frontend: CSS, markup and JS in one file. Server-side placeholders: `{{SITE_NAME}}` and `{{BOOT}}` |
+| `index.html` | The frontend's CSS, markup and rendering JS (text formatting, DOM, chart options). Server-side placeholders: `{{SITE_NAME}}`, `{{BOOT}}` and `{{CORE_JS}}` |
+| `static/core.js` | Pure data logic (bucketing, stats, chart data) with no DOM or clock access. Inlined into the page by the server and `require()`d by the Node tests |
+| `tests/` | Backend, frontend logic and browser smoke tests. See [TESTING.md](TESTING.md) |
 | `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, visual-map, calendar and mark-area components; canvas renderer) |
 | `tools/echarts/` | `package.json` and `entry.js` that build the bundle. Only needed to change chart types; the Pi never needs Node |
 | `powersensor.service` | systemd unit |
@@ -167,8 +169,10 @@ are cheap and are not cached.
 
 ## Frontend
 
-A single inline script. No framework or build step; only the ECharts bundle is
-external.
+No framework or build step. Two scripts are inlined into the page: `static/core.js`
+(exposed as `PS`) holds all data logic as pure functions that take `now` as an
+argument, which keeps them unit-testable. The page script handles formatting, the
+DOM and ECharts options. Only the ECharts bundle is a separate download.
 
 **Load sequence**
 
@@ -199,7 +203,8 @@ Every chart works from the same in-memory list of outage rows:
 - **Window clipping:** `overlap(outage, a, b)` gives the seconds an outage overlaps
   a period.
 - **Bucket size:** periods are hours for windows up to 2 days and local calendar days
-  otherwise. Day steps use `Date.setDate`, so DST is handled.
+  otherwise. Hours follow the local clock, not UTC, which matters in UTC+5:30. Day
+  steps use `Date.setDate`, so DST is handled.
 - **Ongoing outages** use the current time as their end.
 
 | Chart | What it shows |

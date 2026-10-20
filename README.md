@@ -31,6 +31,24 @@ python3 app.py                 # then open http://localhost:8080
 On the Pi, install it as a systemd service and optionally publish it on the internet
 (this works without a public IP). See the admin guide.
 
+## Tests
+
+```bash
+tests/run.sh                  # everything
+python3 -m unittest tests.test_app -v   # backend only
+node --test tests/frontend/   # frontend logic only
+```
+
+There are three suites, and none need packages installed:
+
+- **Backend:** 39 Python `unittest` tests
+- **Frontend logic:** 24 Node `node:test` tests, run in UTC+5:30 and DST time zones
+- **Browser smoke:** 3 headless-Chrome tests that check every chart renders without
+  errors. They skip if Chrome isn't installed
+
+See [docs/TESTING.md](docs/TESTING.md) for requirements, running single tests, and
+what's covered.
+
 ## Docs
 
 - [docs/ADMINISTRATION.md](docs/ADMINISTRATION.md): install, configuration,
@@ -38,13 +56,17 @@ On the Pi, install it as a systemd service and optionally publish it on the inte
   troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, data
   model, HTTP API, frontend design, failure modes, design decisions
+- [docs/TESTING.md](docs/TESTING.md): running the tests locally, what each suite
+  covers, adding tests
 
 ## Repository layout
 
 ```
 app.py                 server: poller, SQLite store, HTTP server
-index.html             the whole frontend (CSS + JS inline)
+index.html             frontend markup, CSS and rendering JS
+static/core.js         frontend data logic (pure functions, inlined into the page)
 static/echarts.min.js  trimmed ECharts bundle (built from tools/echarts)
+tests/                 backend, frontend logic and browser smoke tests
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
 docs/                  architecture and administration guides

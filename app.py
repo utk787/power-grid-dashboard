@@ -224,7 +224,9 @@ class App:
             raw = f.read_bytes()
             ctype = {".js": "application/javascript", ".css": "text/css"}.get(f.suffix, "application/octet-stream")
             self.static[f.name] = (raw, gzip.compress(raw, 9), ctype)
-        self.asset_version = hashlib.sha1(b"".join(v[0] for v in self.static.values())).hexdigest()[:10]
+        self.asset_version = hashlib.sha1(b"".join(v[0] for _, v in sorted(self.static.items()))).hexdigest()[:10]
+        # The data logic is inlined (not a separate request) so the status renders from the first response.
+        self.template = self.template.replace("{{CORE_JS}}", (HERE / "static" / "core.js").read_text(encoding="utf-8"))
         self._cache = {}
         self._cache_lock = threading.Lock()
 
