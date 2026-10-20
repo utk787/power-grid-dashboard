@@ -9,7 +9,7 @@ throwaway databases and servers on `127.0.0.1`.
 |---|---|---|---|---|
 | **Backend** | 53 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
 | **Frontend logic** | 24 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
-| **Browser smoke** | 3 | The real page in headless Chrome: every chart draws, no JS errors, correct status text | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
+| **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
 ## Requirements
 
@@ -37,7 +37,7 @@ found, the smoke tests are reported as skipped.
 python3 -m unittest tests.test_app -v        # backend only (fast, ~2 s)
 python3 -m unittest tests.test_app.ConfigTests -v   # just the config-file tests
 node --test tests/frontend/                  # frontend logic only (<1 s)
-python3 -m unittest tests.test_smoke -v      # browser smoke tests (~5 s)
+python3 -m unittest tests.test_smoke -v      # browser smoke tests (~10 s)
 python3 -m unittest discover -s tests -v     # backend + smoke together
 ```
 
@@ -168,8 +168,20 @@ tall enough that every lazily drawn chart comes into view. Each test checks:
 - no "Loading chart…" placeholder is left
 - the right status text and stat tiles are shown
 
-The three scenarios are: power on with 45 days of history (including an inferred
-outage), an ongoing outage, and an empty history.
+**Desktop layout** (1000 px wide) has three scenarios: power on with 45 days of
+history (including an inferred outage), an ongoing outage, and an empty history.
+
+**Phone layout** uses a 500 px window. That's the narrowest headless Chrome allows,
+and it's still under the 640 px phone breakpoint.
+
+- **Now tab:** the 3 latest outages and "See all" are shown, and only the on/off
+  chart is drawn. Charts on other tabs stay undrawn.
+- **Opening `#trends` and `#patterns` directly:** the right tab is selected, and
+  exactly that tab's charts draw without errors.
+- **`#history`:** the outage list is shown.
+
+Tab taps, the Back button, the ⇔ custom range, "More stats" and tap-a-day were also
+checked by hand in emulated iPhone Chrome. The command-line smoke tests can't click.
 
 ## How the tests are built
 
