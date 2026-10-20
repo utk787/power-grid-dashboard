@@ -6,12 +6,12 @@ Wants=network-online.target
 [Service]
 User=utkarsh
 WorkingDirectory=/home/utkarsh/powersensor
-ExecStart=/usr/bin/python3 /home/utkarsh/powersensor/app.py
-Environment=SENSOR_URL=http://192.168.1.249/
-Environment=PORT=8080
-Environment=SITE_NAME=Power Grid Status
+# All settings live in config.ini; restart the service after editing it.
+ExecStart=/usr/bin/python3 /home/utkarsh/powersensor/app.py --config /home/utkarsh/powersensor/config.ini
 Restart=always
 RestartSec=3
+# Exit code 2 = invalid config: stop instead of restarting in a loop (fix config.ini, then start).
+RestartPreventExitStatus=2
 # Keep the footprint small on the Pi
 MemoryMax=80M
 Nice=5

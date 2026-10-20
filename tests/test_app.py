@@ -404,5 +404,129 @@ class HttpTests(TempDB):
         self.assertEqual(self.get("/healthz")[2], b"ok")
 
 
+# --------------------------------------------------------------------------- config file
+
+SETTINGS = [name for section in app.CONFIG_SCHEMA.values() for name, *_ in section.values()]
+
+
+class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # main()/apply_config() change module globals; put them back after each test.
+        saved = {name: getattr(app, name) for name in SETTINGS}
+        self.addCleanup(lambda: app.apply_config(saved))
+        # main() configures root logging; keep it from changing output for the rest of the run.
+        p = mock.patch.object(app.logging, "basicConfig")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def write(self, text, name="config.ini"):
+        path = Path(self.tmp.name) / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def assertConfigError(self, text, *fragments):
+        with self.assertRaises(app.ConfigError) as cm:
+            app.load_config(self.write(text))
+        for f in fragments:
+            self.assertIn(f, str(cm.exception))
+
+    def test_shipped_config_matches_builtin_defaults(self):
+        values = app.load_config(app.DEFAULT_CONFIG)
+        self.assertEqual(set(values), set(SETTINGS), "config.ini should list every setting")
+        for name in SETTINGS:
+            if name == "SITE_NAME":
+                continue  # the deployed name is a site choice
+            self.assertEqual(values[name], getattr(app, name), name)
+
+    def test_values_are_typed(self):
+        v = app.load_config(self.write(
+            "[sensor]\nurl = https://example.test/x\npoll_interval = 2.5\nfail_threshold = 4\n"
+            "[server]\nport = 9000\nsite_name = Green Park 100% Power\n"))
+        self.assertEqual(v, {"SENSOR_URL": "https://example.test/x", "POLL_INTERVAL": 2.5, "FAIL_THRESHOLD": 4,
+                             "PORT": 9000, "SITE_NAME": "Green Park 100% Power"})
+
+    def test_missing_keys_and_sections_keep_defaults(self):
+        self.assertEqual(app.load_config(self.write("# nothing set\n")), {})
+        self.assertEqual(app.load_config(self.write("[server]\nport = 81\n")), {"PORT": 81})
+
+    def test_keys_are_case_insensitive_and_whitespace_trimmed(self):
+        self.assertEqual(app.load_config(self.write("[server]\nPORT =   8081  \n")), {"PORT": 8081})
+
+    def test_db_path_resolution(self):
+        base = Path(self.tmp.name).resolve()
+        self.assertEqual(app.load_config(self.write("[storage]\ndb_path = data/p.db\n"))["DB_PATH"], str(base / "data/p.db"))
+        self.assertEqual(app.load_config(self.write("[storage]\ndb_path = /var/lib/p.db\n"))["DB_PATH"], str(Path("/var/lib/p.db").resolve()))
+        self.assertEqual(app.load_config(self.write("[storage]\ndb_path = ~/p.db\n"))["DB_PATH"],
+                         str(Path("~/p.db").expanduser().resolve()))
+
+    def test_unknown_section(self):
+        self.assertConfigError("[sensors]\nurl = http://x/\n", "unknown section [sensors]", "sensor, monitor")
+
+    def test_unknown_key(self):
+        self.assertConfigError("[sensor]\npoll_intervall = 5\n", "unknown key 'poll_intervall' in [sensor]", "poll_interval")
+
+    def test_invalid_values(self):
+        cases = [
+            ("[sensor]\npoll_interval = fast\n", "poll_interval"),
+            ("[sensor]\npoll_interval = 0\n", "> 0"),
+            ("[sensor]\nfail_threshold = 2.5\n", "whole number"),
+            ("[sensor]\nfail_threshold = 0\n", ">= 1"),
+            ("[sensor]\nurl = 192.168.1.249\n", "http://"),
+            ("[sensor]\nmatch =\n", "non-empty"),
+            ("[server]\nport = 70000\n", "1-65535"),
+            ("[server]\nsite_name = \n", "non-empty"),
+        ]
+        for text, fragment in cases:
+            with self.subTest(text=text):
+                self.assertConfigError(text, "is invalid", fragment)
+
+    def test_default_section_rejected(self):
+        self.assertConfigError("[DEFAULT]\nport = 81\n", "not [DEFAULT]")
+
+    def test_malformed_files(self):
+        self.assertConfigError("port = 81\n", "config.ini")                       # key before any section
+        self.assertConfigError("[server]\nport = 1\nport = 2\n", "port")          # duplicate key
+
+    def test_missing_file(self):
+        with self.assertRaises(app.ConfigError) as cm:
+            app.load_config(Path(self.tmp.name) / "nope.ini")
+        self.assertIn("not found", str(cm.exception))
+
+    def test_apply_config_sets_settings(self):
+        app.apply_config({"FAIL_THRESHOLD": 7, "SITE_NAME": "X"})
+        self.assertEqual((app.FAIL_THRESHOLD, app.SITE_NAME), (7, "X"))
+
+    def test_main_exits_with_code_2_on_bad_or_missing_config(self):
+        for args in (["--config", str(self.write("[server]\nport = nope\n"))], ["--config", str(Path(self.tmp.name) / "missing.ini")]):
+            with self.subTest(args=args), self.assertLogs("powersensor", "ERROR"), self.assertRaises(SystemExit) as cm:
+                app.main(args)
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_main_uses_config_values(self):
+        db = Path(self.tmp.name) / "x.db"
+        path = self.write("[storage]\ndb_path = %s\n[server]\nhost = 127.0.0.1\nport = 18999\nsite_name = Cfg Test\n" % db)
+        bound = []
+
+        class FakeServer:
+            def __init__(self, addr, handler):
+                bound.append(addr)
+                self.handler = handler
+
+            def serve_forever(self):
+                pass  # return at once so main() finishes
+
+        with mock.patch.object(app, "ThreadingHTTPServer", FakeServer), \
+                mock.patch.object(app.Monitor, "run", lambda self, stop: None), \
+                mock.patch.object(app.signal, "signal"), \
+                self.assertLogs("powersensor", "INFO") as logs:
+            app.main(["--config", str(path)])
+        self.assertEqual(bound, [("127.0.0.1", 18999)])
+        self.assertEqual(app.SITE_NAME, "Cfg Test")
+        self.assertTrue(db.exists(), "database created at the configured path")
+        self.assertTrue(any("loaded config from" in line for line in logs.output))
+
+
 if __name__ == "__main__":
     unittest.main()

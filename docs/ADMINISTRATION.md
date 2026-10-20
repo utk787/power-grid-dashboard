@@ -8,6 +8,7 @@ Raspberry Pi. For how it works internally, see [ARCHITECTURE.md](ARCHITECTURE.md
 | What | Where |
 |---|---|
 | App directory | `/home/utkarsh/powersensor/` (`app.py`, `index.html`, `static/`) |
+| Config file | `/home/utkarsh/powersensor/config.ini` (read once at startup) |
 | Database | `/home/utkarsh/powersensor/power.db` (plus `power.db-wal` and `power.db-shm` while running) |
 | Service | `powersensor` (systemd), runs as user `utkarsh` |
 | Local URL | `http://raspberrypi:8080` or `http://<pi-ip>:8080` |
@@ -24,14 +25,15 @@ From the machine that has the repo:
 
 ```bash
 ssh utkarsh@raspberrypi 'mkdir -p ~/powersensor'
-scp -r app.py index.html static powersensor.service utkarsh@raspberrypi:~/powersensor/
+scp -r app.py index.html static config.ini powersensor.service utkarsh@raspberrypi:~/powersensor/
 ```
 
-On the Pi, try it in the foreground first:
+On the Pi, check `~/powersensor/config.ini`, especially the sensor `url` and
+`site_name` (see §2). Then try it in the foreground:
 
 ```bash
 cd ~/powersensor && python3 app.py
-# expect: "polling http://192.168.1.249/ every 5.0s, serving on http://0.0.0.0:8080"
+# expect: "loaded config from /home/utkarsh/powersensor/config.ini", then "polling http://192.168.1.249/ every 5.0s, serving on http://0.0.0.0:8080"
 # open http://raspberrypi:8080 and check it says "Power is ON", then press Ctrl+C
 ```
 
@@ -44,42 +46,65 @@ sudo systemctl enable --now powersensor
 ```
 
 If your username or path differs from `utkarsh` / `/home/utkarsh/powersensor`, edit
-`User=`, `WorkingDirectory=` and `ExecStart=` in the unit file first.
+`User=`, `WorkingDirectory=` and `ExecStart=` (including the `--config` path) in the
+unit file first.
 
 ## 2. Configuration
 
-All settings are environment variables. Defaults are shown below.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SENSOR_URL` | `http://192.168.1.249/` | Sensor endpoint |
-| `SENSOR_MATCH` | `Mains On` | Text in the reply that means power is on (case-insensitive) |
-| `POLL_INTERVAL` | `5` | Seconds between checks |
-| `REQUEST_TIMEOUT` | `3` | Seconds before a check counts as failed |
-| `FAIL_THRESHOLD` | `3` | Consecutive failed checks before an outage is declared (3 × 5 s ≈ 15 s) |
-| `HEARTBEAT_INTERVAL` | `60` | Seconds between "monitor alive" timestamps |
-| `GAP_THRESHOLD` | `180` | If the app was down longer than this, the gap is logged as a likely outage |
-| `DB_PATH` | `./power.db` (next to `app.py`) | SQLite file |
-| `HOST` | `0.0.0.0` | Listen address. Use `127.0.0.1` to allow only a tunnel on the same Pi (see §4) |
-| `PORT` | `8080` | Listen port |
-| `SITE_NAME` | `Power Status` | Page title and header |
-
-To change them, use a systemd override rather than editing the unit file, so your
-changes survive upgrades:
+All settings live in **`config.ini`**, an INI file next to `app.py`. The app reads it
+**once at startup**, so restart after editing:
 
 ```bash
-sudo systemctl edit powersensor
+nano ~/powersensor/config.ini
+sudo systemctl restart powersensor
+journalctl -u powersensor -n 5      # should say "loaded config from …"
 ```
+
+The file is commented line by line. Every setting is optional: a missing or
+commented-out line uses the default below.
+
+| Section | Key | Default | Meaning |
+|---|---|---|---|
+| `[sensor]` | `url` | `http://192.168.1.249/` | Sensor address (must start with `http://` or `https://`) |
+| | `match` | `Mains On` | Text in the reply that means power is on (case-insensitive, matched anywhere) |
+| | `poll_interval` | `5` | Seconds between checks (decimals allowed) |
+| | `request_timeout` | `3` | Seconds before a check counts as failed |
+| | `fail_threshold` | `3` | Consecutive failed checks before an outage is declared (3 × 5 s ≈ 15 s). Raise it if Wi-Fi is flaky |
+| `[monitor]` | `heartbeat_interval` | `60` | Seconds between "monitor alive" timestamps |
+| | `gap_threshold` | `180` | If the app was down longer than this many seconds, the gap is logged as a likely outage |
+| `[storage]` | `db_path` | `power.db` | SQLite file. A relative path is relative to the config file's folder; `~` is expanded |
+| `[server]` | `host` | `0.0.0.0` | Listen address. `127.0.0.1` allows only a tunnel on the same Pi (see §4) |
+| | `port` | `8080` | Listen port (1–65535) |
+| | `site_name` | `Power Status` in code; `Power Grid Status` in the shipped file | Page title and header |
+
+Example: change the name and tolerate flakier Wi-Fi:
 
 ```ini
-[Service]
-Environment=SITE_NAME=Green Park Power
-Environment=FAIL_THRESHOLD=4
+[sensor]
+fail_threshold = 4
+
+[server]
+site_name = Green Park Power
 ```
 
-```bash
-sudo systemctl restart powersensor
-```
+**Rules**
+
+- Put comments on their own line. A `#` after a value becomes part of the value.
+- Key names are case-insensitive and spaces around `=` are ignored. No quotes are
+  needed, even if the value contains spaces or `%`.
+- A **mistake stops the app** with a message naming the line: an unknown section or
+  key (e.g. a typo like `poll_intervall`), a value of the wrong type, or a value out
+  of range. Nothing is silently ignored. The process exits with code 2, and systemd
+  doesn't keep restarting it (`RestartPreventExitStatus=2`). Fix the file, then run
+  `sudo systemctl start powersensor`. The error is in
+  `journalctl -u powersensor -n 5`.
+- **Another location:** `python3 app.py --config /path/to/file.ini`. The service unit
+  passes `--config` explicitly. If no `--config` is given and there's no `config.ini`
+  next to `app.py`, the app logs a warning and runs on built-in defaults.
+- Environment variables are **not** read. Older setups that used
+  `Environment=SITE_NAME=…` lines or a `systemctl edit` override must move those
+  values into `config.ini`. Remove the old override with
+  `sudo systemctl revert powersensor`.
 
 > **Sensor IP:** give the sensor a DHCP reservation in your router so
 > `192.168.1.249` never changes. If it does change, every check fails and the
@@ -170,8 +195,8 @@ at its edge, so the Pi barely serves the heavy file. Status and API responses ar
 
 ### Hardening once a tunnel is in place
 
-- If nobody needs the LAN URL, add `Environment=HOST=127.0.0.1` (see §2). The app is
-  then only reachable through the tunnel.
+- If nobody needs the LAN URL, set `host = 127.0.0.1` under `[server]` in
+  `config.ini` (see §2). The app is then only reachable through the tunnel.
 - The app is read-only with no login and exposes no write endpoints, so nothing
   further is required.
 - With Cloudflare you can add a rate-limiting rule as cheap insurance against
@@ -189,7 +214,9 @@ power, the site goes offline exactly then, wherever it's hosted. To avoid that:
 
 ## 5. Backups and restore
 
-The database is the only state. Everything else can be re-copied from the repo.
+The database and your `config.ini` are the only state. Everything else can be
+re-copied from the repo. Keep a copy of `config.ini` alongside the database backups:
+`cp ~/powersensor/config.ini ~/backups/`.
 
 **Manual backup.** This is safe while the app runs and gives a consistent snapshot:
 
@@ -264,10 +291,17 @@ outage.
 ## 7. Upgrading
 
 ```bash
-# from the repo machine
+# from the repo machine (note: config.ini is NOT copied, so your settings are kept)
 scp -r app.py index.html static utkarsh@raspberrypi:~/powersensor/
 ssh utkarsh@raspberrypi 'sudo systemctl restart powersensor'
 ```
+
+- **Config:** don't overwrite the Pi's `config.ini` when upgrading. If a new version
+  adds settings, they work with their defaults straight away. To adopt them, compare
+  with the repo's `config.ini` (`diff`) and copy over the lines you want.
+- **Service unit changes:** if `powersensor.service` changed, copy it to
+  `/etc/systemd/system/` again and run `sudo systemctl daemon-reload` before
+  restarting.
 
 - **Schema changes:** new tables or indexes are created automatically on start
   (`CREATE … IF NOT EXISTS`). Existing data is never rewritten.
@@ -296,10 +330,12 @@ sync can be off, mainly the end of a "likely outage" recorded at startup.
 |---|---|---|
 | Page shows "Status unavailable · Monitor last checked … ago" | Poller stuck or app overloaded | `sudo systemctl restart powersensor`; check the logs |
 | Page shows "Can't reach the status server" | Pi, app or tunnel down, or the visitor is offline | `systemctl status powersensor`; check the tunnel (`tailscale funnel status` / Cloudflare dashboard) |
-| Permanent "Power is OUT" while power is on | Sensor IP changed or sensor reply text changed | `curl -i http://192.168.1.249/` from the Pi; it should print `Mains On`. Fix `SENSOR_URL` / `SENSOR_MATCH` |
-| Outage recorded when power was fine | Wi-Fi/router hiccup longer than ~15 s, or a maintenance stop over 3 min | Delete the row (§6). Raise `FAIL_THRESHOLD` if Wi-Fi is flaky |
+| Service won't start; log says `config.ini: unknown key …` or `… is invalid; expected …` | Mistake in `config.ini` | Fix the named line (§2), then `sudo systemctl start powersensor` |
+| Settings change has no effect | Config is only read at startup, or the service uses another file via `--config` | `sudo systemctl restart powersensor`; check the "loaded config from" log line for the path |
+| Permanent "Power is OUT" while power is on | Sensor IP changed or sensor reply text changed | `curl -i http://192.168.1.249/` from the Pi; it should print `Mains On`. Fix `url` / `match` under `[sensor]` in `config.ini` |
+| Outage recorded when power was fine | Wi-Fi/router hiccup longer than ~15 s, or a maintenance stop over 3 min | Delete the row (§6). Raise `fail_threshold` in `config.ini` if Wi-Fi is flaky |
 | Charts stay on "Loading chart…" | `static/` folder missing on the Pi | Copy `static/` again and restart |
-| `Address already in use` in the logs | Another process is on port 8080 | `sudo ss -ltnp | grep 8080`; change `PORT` or stop the other process |
+| `Address already in use` in the logs | Another process is on port 8080 | `sudo ss -ltnp | grep 8080`; change `port` in `config.ini` or stop the other process |
 | `sqlite3.OperationalError: database is locked` | A manual `sqlite3` session holds a write transaction open | Finish or exit that session |
 | Wrong times on the page | Visitor's phone time zone, or the Pi clock (see §8) | Times show in each visitor's own time zone by design |
 

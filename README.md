@@ -25,8 +25,12 @@ ECharts bundle) load afterwards.
 ## Quick start
 
 ```bash
-python3 app.py                 # then open http://localhost:8080
+python3 app.py                 # reads config.ini, then open http://localhost:8080
 ```
+
+All settings (sensor address, thresholds, port, site name, database path) are in
+[`config.ini`](config.ini), which is commented line by line. The app reads it once
+at startup; use `--config PATH` to point at another file.
 
 On the Pi, install it as a systemd service and optionally publish it on the internet
 (this works without a public IP). See the admin guide.
@@ -41,7 +45,7 @@ node --test tests/frontend/   # frontend logic only
 
 There are three suites, and none need packages installed:
 
-- **Backend:** 39 Python `unittest` tests
+- **Backend:** 53 Python `unittest` tests, covering config loading
 - **Frontend logic:** 24 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 3 headless-Chrome tests that check every chart renders without
   errors. They skip if Chrome isn't installed
@@ -51,7 +55,7 @@ what's covered.
 
 ## Docs
 
-- [docs/ADMINISTRATION.md](docs/ADMINISTRATION.md): install, configuration,
+- [docs/ADMINISTRATION.md](docs/ADMINISTRATION.md): install, `config.ini` settings,
   publishing on the internet without a public IP, backups, data fixes, upgrades,
   troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, data
@@ -62,12 +66,13 @@ what's covered.
 ## Repository layout
 
 ```
-app.py                 server: poller, SQLite store, HTTP server
+app.py                 server: config loading, poller, SQLite store, HTTP server
+config.ini             all settings (read once at startup)
 index.html             frontend markup, CSS and rendering JS
 static/core.js         frontend data logic (pure functions, inlined into the page)
 static/echarts.min.js  trimmed ECharts bundle (built from tools/echarts)
 tests/                 backend, frontend logic and browser smoke tests
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
-docs/                  architecture and administration guides
+docs/                  architecture, administration and testing guides
 ```

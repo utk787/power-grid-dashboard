@@ -38,13 +38,14 @@ flowchart LR
 
 | File | Role |
 |---|---|
-| `app.py` | Everything server-side: config, `Store` (SQLite), `Monitor` (poller and state machine), `App` (page rendering, caches), HTTP handler, `main()` |
+| `app.py` | Everything server-side: config loading, `Store` (SQLite), `Monitor` (poller and state machine), `App` (page rendering, caches), HTTP handler, `main()` |
+| `config.ini` | All settings (INI). Read once at startup; see *Configuration* below |
 | `index.html` | The frontend's CSS, markup and rendering JS (text formatting, DOM, chart options). Server-side placeholders: `{{SITE_NAME}}`, `{{BOOT}}` and `{{CORE_JS}}` |
 | `static/core.js` | Pure data logic (bucketing, stats, chart data) with no DOM or clock access. Inlined into the page by the server and `require()`d by the Node tests |
 | `tests/` | Backend, frontend logic and browser smoke tests. See [TESTING.md](TESTING.md) |
 | `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, visual-map, calendar and mark-area components; canvas renderer) |
 | `tools/echarts/` | `package.json` and `entry.js` that build the bundle. Only needed to change chart types; the Pi never needs Node |
-| `powersensor.service` | systemd unit |
+| `powersensor.service` | systemd unit (runs `app.py --config …/config.ini`) |
 
 ## Threads
 
@@ -64,10 +65,39 @@ Shared state is protected by two locks:
 
 Writes are rare, so contention is negligible.
 
+## Configuration
+
+`main()` reads one INI file before anything else starts: `--config PATH`, or
+`config.ini` next to `app.py`. It uses Python's `configparser` because Python 3.10
+has no TOML reader. The file has four sections, and each key maps to one
+module-level setting:
+
+| Section | Keys → setting |
+|---|---|
+| `[sensor]` | `url` → `SENSOR_URL`, `match` → `SENSOR_MATCH`, `poll_interval` → `POLL_INTERVAL`, `request_timeout` → `REQUEST_TIMEOUT`, `fail_threshold` → `FAIL_THRESHOLD` |
+| `[monitor]` | `heartbeat_interval` → `HEARTBEAT_INTERVAL`, `gap_threshold` → `GAP_THRESHOLD` |
+| `[storage]` | `db_path` → `DB_PATH` (relative paths resolve against the config file's folder) |
+| `[server]` | `host` → `HOST`, `port` → `PORT`, `site_name` → `SITE_NAME` |
+
+- **Defaults:** the module-level settings hold the built-in defaults.
+  `load_config()` returns only the keys the file sets, and `apply_config()` overrides
+  those.
+- **Schema:** `CONFIG_SCHEMA` gives each key's type and validity check. Unknown
+  sections or keys, `[DEFAULT]`, wrong types and out-of-range values raise
+  `ConfigError`.
+- **Bad config:** `main()` logs the error and exits with code **2**. The service unit
+  sets `RestartPreventExitStatus=2`, so a broken file stops the service instead of
+  restart-looping.
+- **No file:** with no `--config` and no default file, the app warns and runs on
+  defaults. An explicit `--config` path that doesn't exist is an error.
+- **No other sources:** there's no reload signal and no environment-variable
+  override, so the running settings are always exactly what was in the file at start.
+
 ## Sensing and the state machine
 
-`check_sensor()` makes one HTTP GET with a `REQUEST_TIMEOUT` (default 3 s). It reads
-at most 512 bytes and checks for `SENSOR_MATCH` (default `Mains On`, compared
+`check_sensor()` makes one HTTP GET with a `REQUEST_TIMEOUT` (`request_timeout`,
+default 3 s). It reads at most 512 bytes and checks for `SENSOR_MATCH` (`match`,
+default `Mains On`, compared
 case-insensitively). Any exception, timeout, non-2xx reply or different text counts
 as **not ok**. The sensor goes offline when mains is absent, so "unreachable" means
 "no power".
@@ -84,8 +114,9 @@ stateDiagram-v2
     off --> on: ok, open outage ends at this check
 ```
 
-- **Debounce:** an outage needs `FAIL_THRESHOLD` failures in a row (default 3, about
-  15 s), and is backdated to the first failed check. One success ends it.
+- **Debounce:** an outage needs `FAIL_THRESHOLD` (`fail_threshold`) failures in a
+  row (default 3, about 15 s), and is backdated to the first failed check. One
+  success ends it.
 - **`since`:** when on, the end of the most recent outage (or `tracking_since` if
   there has never been one). When off, the open outage's start.
 - **Raw readings:** whenever `ok` differs from the previous check, a row goes into
@@ -270,4 +301,5 @@ override. Charts read them at draw time and redraw when the scheme changes.
 - **History size:** `/api/outages` returns at most 20 000 rows, enough for decades at
   realistic outage rates.
 - **One sensor per process.** For several sensors, run one instance per sensor with
-  different `PORT` and `DB_PATH` values.
+  different config files (different `port` and `db_path`), each passed with
+  `--config`.

@@ -7,7 +7,7 @@ throwaway databases and servers on `127.0.0.1`.
 
 | Suite | Tests | What it covers | Tool | File(s) |
 |---|---|---|---|---|
-| **Backend** | 39 | SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
+| **Backend** | 53 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
 | **Frontend logic** | 24 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
 | **Browser smoke** | 3 | The real page in headless Chrome: every chart draws, no JS errors, correct status text | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
@@ -35,6 +35,7 @@ found, the smoke tests are reported as skipped.
 
 ```bash
 python3 -m unittest tests.test_app -v        # backend only (fast, ~2 s)
+python3 -m unittest tests.test_app.ConfigTests -v   # just the config-file tests
 node --test tests/frontend/                  # frontend logic only (<1 s)
 python3 -m unittest tests.test_smoke -v      # browser smoke tests (~5 s)
 python3 -m unittest discover -s tests -v     # backend + smoke together
@@ -76,6 +77,21 @@ machine.
 
 ### Backend (`tests/test_app.py`)
 
+- **Config file:**
+  - The shipped `config.ini` lists every setting and matches the built-in defaults
+    (except `site_name`).
+  - Values come back with the right types, and missing keys or sections keep their
+    defaults.
+  - Keys are case-insensitive and whitespace is trimmed.
+  - `%` is allowed in values.
+  - Relative, absolute and `~` paths for `db_path` resolve correctly.
+  - These all raise a clear error: unknown sections or keys (typos), wrong types,
+    out-of-range values, an empty `match` or `site_name`, a URL without `http://`,
+    a `[DEFAULT]` section, a key outside any section, duplicate keys, and a missing
+    file.
+  - `main()` exits with code 2 on a bad or missing config, and with a good config it
+    binds the configured host and port, creates the database at `db_path`, and uses
+    `site_name`.
 - **Store:**
   - The schema exists and the database runs in WAL mode.
   - Outage start and end come back to the exact second.
@@ -161,8 +177,10 @@ outage), an ongoing outage, and an empty history.
   into `Monitor.record(ok, ts)`. Frontend functions take `now` as an argument and
   never read the clock.
 - **Isolation.** Each backend test gets its own temporary database. Thresholds are
-  patched back to the defaults, so environment variables on your machine can't
-  change the results. Servers bind to port `0` (any free port).
+  patched to the defaults, and config tests restore every setting afterwards, so
+  your `config.ini` can't change the results. Only one test reads the shipped
+  `config.ini`, to check it matches the defaults. Servers bind to port `0` (any free
+  port).
 - **Testable frontend.** All data logic lives in `static/core.js`: pure functions with
   no DOM, ECharts or clock access. The server inlines it into the page, and Node
   `require()`s the same file. `index.html` only formats text and builds chart

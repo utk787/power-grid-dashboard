@@ -4,15 +4,20 @@
 Polls a mains sensor over HTTP, records outages in SQLite and serves a small
 web page showing live status and outage history. Standard library only
 (Python 3.10+), so it runs on a bare Raspberry Pi OS install.
+
+Settings are read once at startup from an INI file (config.ini next to this
+file, or the path given with --config).
 """
+import argparse
+import configparser
 import gzip
 import hashlib
 import html
 import json
 import logging
-import os
 import signal
 import sqlite3
+import sys
 import threading
 import time
 import urllib.request
@@ -21,25 +26,90 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
+DEFAULT_CONFIG = HERE / "config.ini"
 
-
-def env(name, default, cast=str):
-    return cast(os.environ.get(name, default))
-
-
-SENSOR_URL = env("SENSOR_URL", "http://192.168.1.249/")
-SENSOR_MATCH = env("SENSOR_MATCH", "Mains On")
-POLL_INTERVAL = env("POLL_INTERVAL", 5, float)        # seconds between checks
-REQUEST_TIMEOUT = env("REQUEST_TIMEOUT", 3, float)    # seconds per check
-FAIL_THRESHOLD = env("FAIL_THRESHOLD", 3, int)        # failed checks before declaring an outage
-HEARTBEAT_INTERVAL = env("HEARTBEAT_INTERVAL", 60, int)
-GAP_THRESHOLD = env("GAP_THRESHOLD", 180, int)        # monitor downtime treated as a likely outage
-DB_PATH = env("DB_PATH", str(HERE / "power.db"))
-HOST = env("HOST", "0.0.0.0")
-PORT = env("PORT", 8080, int)
-SITE_NAME = env("SITE_NAME", "Power Status")
+# Built-in defaults; main() overrides them from the config file before anything starts.
+SENSOR_URL = "http://192.168.1.249/"
+SENSOR_MATCH = "Mains On"
+POLL_INTERVAL = 5.0        # seconds between checks
+REQUEST_TIMEOUT = 3.0      # seconds per check
+FAIL_THRESHOLD = 3         # failed checks before declaring an outage
+HEARTBEAT_INTERVAL = 60
+GAP_THRESHOLD = 180        # monitor downtime treated as a likely outage
+DB_PATH = str(HERE / "power.db")
+HOST = "0.0.0.0"
+PORT = 8080
+SITE_NAME = "Power Status"
 
 log = logging.getLogger("powersensor")
+
+# [section] key -> (setting it controls, type, validity check, what a valid value looks like)
+CONFIG_SCHEMA = {
+    "sensor": {
+        "url": ("SENSOR_URL", str, lambda v: v.startswith(("http://", "https://")), "an http:// or https:// URL"),
+        "match": ("SENSOR_MATCH", str, bool, "non-empty text"),
+        "poll_interval": ("POLL_INTERVAL", float, lambda v: v > 0, "a number of seconds > 0"),
+        "request_timeout": ("REQUEST_TIMEOUT", float, lambda v: v > 0, "a number of seconds > 0"),
+        "fail_threshold": ("FAIL_THRESHOLD", int, lambda v: v >= 1, "a whole number >= 1"),
+    },
+    "monitor": {
+        "heartbeat_interval": ("HEARTBEAT_INTERVAL", int, lambda v: v >= 1, "a whole number of seconds >= 1"),
+        "gap_threshold": ("GAP_THRESHOLD", int, lambda v: v >= 1, "a whole number of seconds >= 1"),
+    },
+    "storage": {
+        "db_path": ("DB_PATH", str, bool, "a file path"),
+    },
+    "server": {
+        "host": ("HOST", str, bool, "an IP address such as 0.0.0.0 or 127.0.0.1"),
+        "port": ("PORT", int, lambda v: 1 <= v <= 65535, "a port number 1-65535"),
+        "site_name": ("SITE_NAME", str, bool, "non-empty text"),
+    },
+}
+
+
+class ConfigError(Exception):
+    pass
+
+
+def load_config(path):
+    """Parse and validate an INI config file; returns {SETTING_NAME: value} for the keys it sets.
+
+    Unknown sections/keys and invalid values raise ConfigError, so typos fail loudly at startup.
+    A relative db_path is resolved against the config file's directory.
+    """
+    path = Path(path).expanduser()
+    if not path.is_file():
+        raise ConfigError("config file not found: %s" % path)
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path, encoding="utf-8")
+    except configparser.Error as e:
+        raise ConfigError("%s: %s" % (path, e)) from None
+    if parser.defaults():
+        raise ConfigError("%s: put settings in [%s], not [DEFAULT]" % (path, "], [".join(CONFIG_SCHEMA)))
+    values = {}
+    for section in parser.sections():
+        schema = CONFIG_SCHEMA.get(section)
+        if schema is None:
+            raise ConfigError("%s: unknown section [%s] (expected %s)" % (path, section, ", ".join(CONFIG_SCHEMA)))
+        for key, raw in parser.items(section):
+            if key not in schema:
+                raise ConfigError("%s: unknown key '%s' in [%s] (expected %s)" % (path, key, section, ", ".join(schema)))
+            name, cast, valid, expected = schema[key]
+            try:
+                value = cast(raw.strip())
+            except ValueError:
+                value = None
+            if value is None or not valid(value):
+                raise ConfigError("%s: [%s] %s = %r is invalid; expected %s" % (path, section, key, raw, expected))
+            values[name] = value
+    if "DB_PATH" in values:
+        values["DB_PATH"] = str((path.parent / Path(values["DB_PATH"]).expanduser()).resolve())
+    return values
+
+
+def apply_config(values):
+    globals().update(values)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS outages (
@@ -314,8 +384,23 @@ def make_handler(app):
     return Handler
 
 
-def main():
+def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="Power status dashboard")
+    parser.add_argument("--config", help="path to the INI config file (default: config.ini next to app.py)")
+    args = parser.parse_args(argv)
+
+    path = Path(args.config) if args.config else DEFAULT_CONFIG
+    if args.config or path.is_file():
+        try:
+            apply_config(load_config(path))
+        except ConfigError as e:
+            log.error("%s", e)
+            sys.exit(2)  # the service unit doesn't restart on exit code 2, so a bad config doesn't loop
+        log.info("loaded config from %s", path)
+    else:
+        log.warning("no config file at %s, using built-in defaults", path)
+
     store = Store(DB_PATH)
     monitor = Monitor(store)
     app = App(store, monitor)
