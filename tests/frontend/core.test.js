@@ -55,9 +55,23 @@ test('midnight, addDays and isoDay use the local calendar', () => {
   assert.equal(PS.isoDay(at(2026, 1, 5, 23, 59)), '2026-01-05');
 });
 
+test('buckets: 15-minute periods up to 6 hours, aligned to the local clock', () => {
+  const to = at(2026, 10, 21, 10, 57), from = to - 3 * H;   // the 3h default view
+  const {unit, hourly, list} = PS.buckets(from, to);
+  assert.equal(unit, 'quarter');
+  assert.equal(hourly, true);
+  assert.deepEqual(list[0], [at(2026, 10, 21, 7, 45), at(2026, 10, 21, 8)]);
+  assert.deepEqual(list.at(-1), [at(2026, 10, 21, 10, 45), at(2026, 10, 21, 11)]);
+  assert.equal(list.length, 13);
+  for (const [a, b] of list) assert.equal(b - a, 15 * 60);
+  assert.equal(PS.buckets(to - 6 * H, to).unit, 'quarter');
+  assert.equal(PS.buckets(to - 6 * H - 1, to).unit, 'hour');
+});
+
 test('buckets: hourly up to 2 days, aligned to local (not UTC) hours', () => {
   const to = at(2026, 10, 20, 13, 45), from = to - D;
-  const {hourly, list} = PS.buckets(from, to);
+  const {unit, hourly, list} = PS.buckets(from, to);
+  assert.equal(unit, 'hour');
   assert.equal(hourly, true);
   assert.equal(list.length, 25);
   for (const [a, b] of list) {
@@ -69,7 +83,8 @@ test('buckets: hourly up to 2 days, aligned to local (not UTC) hours', () => {
 
 test('buckets: daily beyond 2 days, contiguous local days covering the window', () => {
   const to = at(2026, 10, 20, 9), from = to - 7 * D;
-  const {hourly, list} = PS.buckets(from, to);
+  const {unit, hourly, list} = PS.buckets(from, to);
+  assert.equal(unit, 'day');
   assert.equal(hourly, false);
   assert.equal(list.length, 8);
   assert.equal(list[0][0], at(2026, 10, 13));
@@ -138,6 +153,15 @@ test('stepPoints: window starting inside an ongoing outage starts low and stays 
 test('bucketRows: counts starts per bucket and clips downtime', () => {
   const list = [[0, 100], [100, 200]], O = [[90, 130, 0], [150, 160, 0]];
   assert.deepEqual(PS.bucketRows(O, list, 200), [{a: 0, b: 100, n: 1, d: 10}, {a: 100, b: 200, n: 1, d: 40}]);
+});
+
+test('uptimeRows: a period with no power at all is 0% (e.g. the current hour during an outage)', () => {
+  // Live case from the Pi: power out since 09:53; at 10:57 the 10:00 hour is 0%, the 09:00 hour 88.3%.
+  const now = at(2026, 10, 21, 10, 57), O = [[at(2026, 10, 21, 9, 53), null, 0]];
+  const {list} = PS.buckets(now - 24 * H, now);
+  const rows = PS.uptimeRows(O, list, now - 30 * H, now);
+  assert.equal(rows.at(-1).u, 0);
+  assert.equal(rows.at(-2).u.toFixed(1), '88.3');
 });
 
 test('uptimeRows: null outside history, percentage inside', () => {

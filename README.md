@@ -12,10 +12,10 @@ never compressed or pruned.
 The page:
 
 - **Status card:** power on or off, since when, and when the last outage ended
-- **Range slider:** 24h / 7d / 30d / 90d / All presets. It drives everything below
+- **Range slider:** 3h (default) / 12h / 24h / 7d / 30d / 90d / All presets. It drives everything below
   it, including the outage list at the bottom
 - **Reliability stats**
-- **Eight interactive charts:** on/off step chart, outages per day, outage timeline,
+- **Eight interactive charts:** on/off step chart, outages per period (15 min / hour / day), outage timeline,
   uptime trend, calendar, weekday × hour pattern, start-time histogram, duration
   breakdown
 
@@ -50,8 +50,8 @@ node --test tests/frontend/   # frontend logic only
 
 There are three suites, and none need packages installed:
 
-- **Backend:** 53 Python `unittest` tests, covering config loading
-- **Frontend logic:** 24 Node `node:test` tests, run in UTC+5:30 and DST time zones
+- **Backend:** 57 Python `unittest` tests, covering config loading
+- **Frontend logic:** 26 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
 

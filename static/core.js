@@ -32,17 +32,21 @@
   const inWindow = (outages, from, to, now) => outages.filter(o => overlap(o, from, to, now) > 0);
   const downtime = (outages, a, b, now) => outages.reduce((s, o) => s + overlap(o, a, b, now), 0);
 
-  // Hourly buckets for windows up to 2 days, local calendar days otherwise.
-  // Hours are aligned to the local clock, not UTC (matters in e.g. UTC+5:30).
+  // Bucket size follows the window: 15 minutes up to 6 hours, hours up to 2 days, local
+  // calendar days beyond. Sub-day buckets are aligned to the local clock, not UTC
+  // (matters in e.g. UTC+5:30). `hourly` is true for any sub-day unit.
+  const QUARTER = 15 * 60;
   function buckets(from, to) {
     const list = [];
     if (to - from <= 2 * DAY) {
-      const d = new Date(from * 1000); d.setMinutes(0, 0, 0);
-      for (let a = d.getTime() / 1000; a < to; a += HOUR) list.push([a, a + HOUR]);
-      return {hourly: true, list};
+      const step = to - from <= 6 * HOUR ? QUARTER : HOUR;
+      const d = new Date(from * 1000);
+      d.setMinutes(step === HOUR ? 0 : Math.floor(d.getMinutes() / 15) * 15, 0, 0);
+      for (let a = d.getTime() / 1000; a < to; a += step) list.push([a, a + step]);
+      return {unit: step === HOUR ? 'hour' : 'quarter', hourly: true, list};
     }
     for (let a = midnight(from); a < to; ) { const b = addDays(a, 1); list.push([a, b]); a = b; }
-    return {hourly: false, list};
+    return {unit: 'day', hourly: false, list};
   }
 
   // Reliability numbers for the stat tiles. `start` is when history begins.

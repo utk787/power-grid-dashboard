@@ -15,12 +15,14 @@ import hashlib
 import html
 import json
 import logging
+import os
 import signal
 import sqlite3
 import sys
 import threading
 import time
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -199,6 +201,34 @@ class Store:
         return [list(r) for r in rows]
 
 
+def timezone_name():
+    """The server's IANA time zone (e.g. Asia/Kolkata), or its abbreviation (e.g. IST) if unknown."""
+    tz = os.environ.get("TZ", "").lstrip(":")
+    if tz and "/" in tz:
+        return tz
+    try:
+        name = Path("/etc/timezone").read_text(encoding="utf-8").strip()  # Debian / Raspberry Pi OS
+        if name:
+            return name
+    except OSError:
+        pass
+    try:
+        link = os.readlink("/etc/localtime")  # e.g. /usr/share/zoneinfo/Asia/Kolkata
+        if "zoneinfo/" in link:
+            return link.split("zoneinfo/", 1)[1]
+    except OSError:
+        pass
+    return time.strftime("%Z")
+
+
+def local_iso(ts):
+    """Unix seconds -> ISO 8601 in the server's local time with its UTC offset, e.g. 2026-10-21T09:53:18+05:30."""
+    return None if ts is None else datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
+
+
+TIMEZONE = timezone_name()  # resolved once at startup
+
+
 def check_sensor():
     try:
         with urllib.request.urlopen(SENSOR_URL, timeout=REQUEST_TIMEOUT) as resp:
@@ -264,15 +294,23 @@ class Monitor:
                 log.info("power outage detected")
 
     def snapshot(self):
+        # Timestamps are unix seconds (UTC-based, unambiguous). The *_local copies and the zone
+        # fields are for people and clients that want the Pi's local wall-clock time.
+        now = int(time.time())
         with self.lock:
             return {
                 "state": self.state,
                 "since": self.since,
                 "checked": self.checked,
-                "now": int(time.time()),
+                "now": now,
                 "tracking_since": self.tracking_since,
                 "poll": POLL_INTERVAL,
                 "v": self.store.version,
+                "timezone": TIMEZONE,
+                "utc_offset": local_iso(now)[-6:],
+                "since_local": local_iso(self.since),
+                "checked_local": local_iso(self.checked),
+                "now_local": local_iso(now),
             }
 
     def run(self, stop):

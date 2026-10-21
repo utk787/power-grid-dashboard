@@ -88,10 +88,10 @@ footer{margin-top:28px;text-align:center}
   body:not([data-tab=now]) #hero #sub2{display:inline;margin:0 0 0 8px;font-size:.8rem}
   body:not([data-tab=now]) main>header{display:none}
 
-  nav#presets{margin:14px 0 6px;gap:5px}
-  nav#presets button{padding:10px 0;font-size:.88rem}
+  nav#presets{margin:14px 0 6px;gap:4px}
+  nav#presets button{padding:10px 0;font-size:.82rem}
   .long{display:none}.short{display:inline}
-  #custom{display:block;flex:0 0 44px}
+  #custom{display:block;flex:0 0 40px}
   body:not(.custom) #range{display:none}
   #win{margin-bottom:10px}
 
@@ -126,7 +126,7 @@ footer{margin-top:28px;text-align:center}
   </section>
 
   <nav id="presets" aria-label="Time range">
-    <button data-d="1">24h</button><button data-d="7"><span class="long">7 days</span><span class="short">7d</span></button><button data-d="30"><span class="long">30 days</span><span class="short">30d</span></button><button data-d="90"><span class="long">90 days</span><span class="short">90d</span></button><button data-d="0">All</button><button id="custom" aria-expanded="false" aria-controls="range" title="Custom range" aria-label="Custom range">⇔</button>
+    <button data-h="3">3h</button><button data-h="12">12h</button><button data-h="24">24h</button><button data-h="168"><span class="long">7 days</span><span class="short">7d</span></button><button data-h="720"><span class="long">30 days</span><span class="short">30d</span></button><button data-h="2160"><span class="long">90 days</span><span class="short">90d</span></button><button data-h="0">All</button><button id="custom" aria-expanded="false" aria-controls="range" title="Custom range" aria-label="Custom range">⇔</button>
   </nav>
   <div id="range" aria-label="Drag the handles to choose a custom time window"></div>
   <div id="win" class="small"></div>
@@ -137,9 +137,9 @@ footer{margin-top:28px;text-align:center}
   </div>
 
   <section class="card chart" data-tab="now"><header><h3>Power on / off</h3><span class="small">High = power on, low = outage. Hover or tap for times.</span></header><div class="c" id="c-step">Loading chart…</div></section>
-  <section class="card chart" data-tab="trends"><header><h3>Outages per day</h3><span class="small">Bars: total time without power · line: number of outages. Tap a day to list its outages.</span></header><div class="c" id="c-daily">Loading chart…</div></section>
+  <section class="card chart" data-tab="trends"><header><h3 id="daily-title">Outages per day</h3><span class="small" id="daily-sub">Bars: total time without power · line: number of outages. Tap a day to list its outages.</span></header><div class="c" id="c-daily">Loading chart…</div></section>
   <section class="card chart" data-tab="trends"><header><h3>Outage timeline</h3><span class="small" id="tl-sub">When each outage happened and how long it lasted.</span></header><div class="c" id="c-timeline">Loading chart…</div></section>
-  <section class="card chart" data-tab="trends"><header><h3>Uptime trend</h3><span class="small">Share of each day with power.</span></header><div class="c" id="c-uptime">Loading chart…</div></section>
+  <section class="card chart" data-tab="trends"><header><h3 id="uptime-title">Daily uptime trend</h3><span class="small" id="uptime-sub">Share of each day with power.</span></header><div class="c" id="c-uptime">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>Calendar</h3><span class="small">Each square is a day, coloured by time without power. Shows whole months.</span></header><div class="c" id="c-cal">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>Weekly pattern</h3><span class="small">Total time without power by weekday and hour. Darker = more.</span></header><div class="c" id="c-heat">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>When outages start</h3><span class="small">Number of outages starting in each hour of the day.</span></header><div class="c" id="c-hour">Loading chart…</div></section>
@@ -190,12 +190,26 @@ const when = ts => (midnight(ts) === midnight(now()) ? '' : dayName(ts) + ', ') 
 
 // ---------- time window shared by every chart ----------
 const dataStart = () => PS.dataStart(O, S.tracking_since);
-let preset = 7, W = null, filter = null, listLimit = 100;
-try { const d = localStorage.getItem('range'); if (d !== null && [0, 1, 7, 30, 90].includes(+d)) preset = +d; } catch (e) {}
-const presetWindow = d => { const t = now(); return {from: d ? t - d * 86400 : dataStart(), to: t, live: true}; };
+// Presets are in hours (0 = all history); 3 hours is the default view.
+const PRESETS = [3, 12, 24, 168, 720, 2160, 0];
+let preset = 3, W = null, filter = null, listLimit = 100;
+try { const h = localStorage.getItem('range-h'); if (h !== null && PRESETS.includes(+h)) preset = +h; } catch (e) {}
+const presetWindow = h => { const t = now(); return {from: h ? t - h * 3600 : dataStart(), to: t, live: true}; };
 W = presetWindow(preset);
 
 const buckets = () => PS.buckets(W.from, W.to);
+// Wording and labels for the bucket size the window uses (15 min / hour / day).
+const UNIT = {quarter: ['15 minutes', 'each 15 minutes', 'a period', '15-minute'], hour: ['hour', 'each hour', 'an hour', 'Hourly'],
+              day: ['day', 'each day', 'a day', 'Daily']};
+const bucketLabel = (unit, a) => unit === 'day' ? sdf.format(a * 1000) : unit === 'hour' ? hourName(new Date(a * 1000).getHours()) : time(a);
+const bucketTitle = (unit, a, b) => unit === 'day' ? dayName(a) : dayName(a) + ', ' + time(a) + '–' + time(b);
+function renderLabels() {
+  const [per, each, one, adj] = UNIT[buckets().unit];
+  $('daily-title').textContent = 'Outages per ' + per;
+  $('daily-sub').textContent = 'Bars: total time without power · line: number of outages. Tap ' + one + ' to list its outages.';
+  $('uptime-title').textContent = adj + ' uptime trend';
+  $('uptime-sub').textContent = 'Share of ' + each + ' with power.';
+}
 const inWindow = () => PS.inWindow(O, W.from, W.to, now());
 
 // ---------- status card ----------
@@ -237,7 +251,7 @@ function renderHero() {
 function renderStats() {
   const st = PS.stats(O, W.from, W.to, dataStart(), now()), opt = v => v == null ? '–' : dur(v);
   const tiles = [
-    ['Outages', st.count, st.perDay.toFixed(1) + ' per day'],
+    ['Outages', st.count, W.to - Math.max(W.from, dataStart()) >= 86400 ? st.perDay.toFixed(1) + ' per day' : 'in this period'],
     ['Without power', st.down ? dur(st.down) : '0m', 'in total'],
     ['Uptime', pct(st.uptime), 'of the time'],
     ['Average outage', opt(st.avg), 'per outage'],
@@ -251,6 +265,7 @@ function renderStats() {
     t.append(el('span', 'small', label), el('b', null, v), el('span', 'small', sub));
     return t;
   }));
+  renderLabels();
   const fmt = ts => sdf.format(ts * 1000) + (W.to - W.from <= 2 * 86400 ? ' ' + time(ts) : '');
   $('win').textContent = 'Showing ' + fmt(W.from) + ' → ' + (W.live ? 'now' : fmt(W.to));
 }
@@ -342,17 +357,16 @@ const charts = {
   },
 
   daily() {
-    const {hourly, list} = buckets();
+    const {unit, list} = buckets();
     const rows = PS.bucketRows(O, list, now());
-    const label = a => hourly ? hourName(new Date(a * 1000).getHours()) : sdf.format(a * 1000);
     return base({
       grid: {left: 8, right: 8, top: 26, bottom: 4, containLabel: true},
       tooltip: tooltip({trigger: 'axis', axisPointer: {type: 'shadow'}, formatter: ps => {
         const r = rows[ps[0].dataIndex];
-        return tip(hourly ? dayName(r.a) + ', ' + time(r.a) + '–' + time(r.b) : dayName(r.a),
+        return tip(bucketTitle(unit, r.a, r.b) + (r.b > now() ? ' (so far)' : ''),
           ['Outages: <b>' + r.n + '</b>', 'Without power: <b>' + (r.d ? dur(r.d) : 'none') + '</b>']);
       }}),
-      xAxis: axis({type: 'category', data: rows.map(r => label(r.a)), splitLine: {show: false}}),
+      xAxis: axis({type: 'category', data: rows.map(r => bucketLabel(unit, r.a)), splitLine: {show: false}}),
       yAxis: [
         axis({type: 'value', name: 'downtime', nameTextStyle: {color: C.muted, align: 'left'},
               axisLabel: {color: C.muted, formatter: v => v ? dur(v * 3600) : '0'}}),
@@ -390,17 +404,18 @@ const charts = {
   },
 
   uptime() {
-    const {hourly, list} = buckets(), rows = PS.uptimeRows(O, list, dataStart(), now());
+    const {unit, list} = buckets(), rows = PS.uptimeRows(O, list, dataStart(), now());
     const vals = rows.map(r => r.u).filter(u => u != null);
     const lo = vals.length ? Math.max(0, Math.floor(Math.min(...vals) / 5) * 5) : 0;
     return base({
       grid: {left: 8, right: 24, top: 14, bottom: 4, containLabel: true},
       tooltip: tooltip({trigger: 'axis', formatter: ps => {
-        const r = rows[ps[0].dataIndex];
-        return tip(hourly ? dayName(r.a) + ', ' + time(r.a) : dayName(r.a), [r.u == null ? 'No data' : 'Uptime: <b>' + pct(r.u) + '</b>']);
+        const i = ps[0].dataIndex, r = rows[i], b = list[i][1], partial = b > now();
+        return tip(bucketTitle(unit, r.a, b) + (partial ? ' (so far)' : ''),
+          [r.u == null ? 'No data' : 'With power: <b>' + pct(r.u) + '</b> of the time' + (partial ? ' so far' : '')]);
       }}),
       xAxis: axis({type: 'category', boundaryGap: false, splitLine: {show: false},
-        data: rows.map(r => hourly ? hourName(new Date(r.a * 1000).getHours()) : sdf.format(r.a * 1000))}),
+        data: rows.map(r => bucketLabel(unit, r.a))}),
       yAxis: axis({type: 'value', min: lo === 100 ? 95 : lo, max: 100, axisLabel: {color: C.muted, formatter: '{value}%'}}),
       series: [{type: 'line', data: rows.map(r => r.u), symbol: 'circle', symbolSize: 5, showSymbol: rows.length <= 45,
         lineStyle: {color: C.on, width: 2}, itemStyle: {color: C.on}, areaStyle: {color: C.on, opacity: 0.12}}],
@@ -564,15 +579,14 @@ function syncRange() {
 
 // ---------- presets ----------
 function renderPresets() {
-  for (const b of $('presets').querySelectorAll('[data-d]')) b.setAttribute('aria-pressed', +b.dataset.d === preset ? 'true' : 'false');
+  for (const b of $('presets').querySelectorAll('[data-h]')) b.setAttribute('aria-pressed', +b.dataset.h === preset ? 'true' : 'false');
   $('custom').setAttribute('aria-pressed', document.body.classList.contains('custom') || preset == null ? 'true' : 'false');
 }
 $('presets').onclick = e => {
-  const b = e.target.closest('[data-d]');
+  const b = e.target.closest('[data-h]');
   if (!b) return;
-  const d = b.dataset.d;
-  preset = +d; W = presetWindow(preset); filter = null; listLimit = 100;
-  try { localStorage.setItem('range', d); } catch (err) {}
+  preset = +b.dataset.h; W = presetWindow(preset); filter = null; listLimit = 100;
+  try { localStorage.setItem('range-h', b.dataset.h); } catch (err) {}
   renderAll();
 };
 function renderAll() { renderPresets(); renderHero(); renderStats(); renderList(); renderRecent(); syncRange(); redrawCharts(); }

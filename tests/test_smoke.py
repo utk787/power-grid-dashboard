@@ -61,8 +61,9 @@ class BrowserSmokeTest(unittest.TestCase):
                 start = now - day * 86400 + k * 5 * 3600
                 self.store.start_outage(start)
                 self.store.end_outage(start + length)
-        self.store.start_outage(now - 3 * 86400, inferred=True)
-        self.store.end_outage(now - 3 * 86400 + 5400)
+        # Recent enough to fall inside the default 3-hour view.
+        self.store.start_outage(now - 2 * 3600, inferred=True)
+        self.store.end_outage(now - 2 * 3600 + 1800)
         if ongoing:
             self.store.start_outage(now - 1200)
 

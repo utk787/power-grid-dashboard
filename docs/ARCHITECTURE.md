@@ -172,7 +172,7 @@ minute. A year with three outages a day is roughly 2–3 k rows per table, well 
 | Route | Response | Cache-Control |
 |---|---|---|
 | `GET /` | `index.html` with `{{BOOT}}` replaced by JSON: `status` (a `/api/status` snapshot), `outages` (all rows), `echarts` (versioned script URL) | `no-store` |
-| `GET /api/status` | `{state, since, checked, now, tracking_since, poll, v}` | `no-store` |
+| `GET /api/status` | `{state, since, checked, now, tracking_since, poll, v, timezone, utc_offset, since_local, checked_local, now_local}` (example below) | `no-store` |
 | `GET /api/outages?days=N` | `{days, outages: [[start, end\|null, inferred], …]}`, newest first. `days=0` returns all (capped at 20 000 rows) | `no-store` |
 | `GET /api/readings?from=&to=` | `{from, to, readings: [[ts, ok], …]}`, oldest first; defaults to the last 24 h, capped at 100 000 rows | `no-store` |
 | `GET /static/<file>` | Files from `static/`, read and gzip-9 compressed once at startup | `public, max-age=31536000, immutable` |
@@ -180,8 +180,25 @@ minute. A year with three outages a day is roughly 2–3 k rows per table, well 
 
 Notes:
 
-- All timestamps are unix seconds. The browser converts them to the visitor's local
-  time zone.
+- **Timestamps:** all of them are unix seconds, which identify an exact moment
+  whatever the time zone. The dashboard converts them to each visitor's local time.
+- **Time zone fields:** for other clients and for humans, `/api/status` also reports
+  the Pi's time zone and the main moments as local ISO 8601 times with the UTC offset
+  included:
+  - `timezone` is the IANA name, read from `TZ`, `/etc/timezone` or
+    `/etc/localtime`. If none of those exist, it falls back to an abbreviation such
+    as `IST`.
+  - `utc_offset` is the offset right now. It can change with DST in zones that use it.
+  - `checked_local` is `null` before the first check.
+
+  ```json
+  {"state": "off", "since": 1792556598, "checked": 1792561066, "now": 1792561071,
+   "tracking_since": 1792508266, "poll": 5.0, "v": 3,
+   "timezone": "Asia/Kolkata", "utc_offset": "+05:30",
+   "since_local": "2026-10-21T09:53:18+05:30",
+   "checked_local": "2026-10-21T11:07:46+05:30",
+   "now_local": "2026-10-21T11:07:51+05:30"}
+  ```
 - `v` in `/api/status` is `Store.version`, an in-memory counter bumped on every
   outage insert or update. Clients reload outages when it changes.
 - Responses over 512 bytes are gzipped when the client accepts it. Dynamic responses
@@ -220,8 +237,9 @@ DOM and ECharts options. Only the ECharts bundle is a separate download.
 
 `W = {from, to, live}` drives the stats, all eight charts and the list.
 
-- **Preset buttons** (24h / 7d / 30d / 90d / All) set `W` and move the slider. The
-  choice is remembered in `localStorage`.
+- **Preset buttons** (3h / 12h / 24h / 7d / 30d / 90d / All; **3h is the default**)
+  set `W` and move the slider. The choice is remembered in `localStorage` (key
+  `range-h`, in hours).
 - **Dragging the slider** (an ECharts slider data-zoom over the full history, whose
   shadow shows daily downtime) sets a custom `W`. Charts redraw 150 ms after the drag
   stops; stats and the list update immediately.
@@ -233,17 +251,21 @@ Every chart works from the same in-memory list of outage rows:
 
 - **Window clipping:** `overlap(outage, a, b)` gives the seconds an outage overlaps
   a period.
-- **Bucket size:** periods are hours for windows up to 2 days and local calendar days
-  otherwise. Hours follow the local clock, not UTC, which matters in UTC+5:30. Day
-  steps use `Date.setDate`, so DST is handled.
+- **Bucket size:** periods are 15 minutes for windows up to 6 hours, hours up to 2
+  days, and local calendar days beyond that. Sub-day periods follow the local clock,
+  not UTC, which matters in UTC+5:30. Day steps use `Date.setDate`, so DST is
+  handled. Chart titles and subtitles name the current size ("Outages per hour",
+  "Share of each 15 minutes with power").
+- **The current period** is still in progress, so tooltips mark it "(so far)". During
+  an ongoing outage its uptime is correctly 0%.
 - **Ongoing outages** use the current time as their end.
 
 | Chart | What it shows |
 |---|---|
 | Power on/off | Step line plus red bands for outages. 300 sample points are added so the tooltip works anywhere along the line |
-| Outages per day | Bars of downtime per bucket and a line of outage starts per bucket. Tapping a bucket filters the list |
+| Outages per day / hour / 15 minutes | Bars of downtime per bucket and a line of outage starts per bucket. Tapping a bucket filters the list |
 | Outage timeline | Custom series: one row per day (latest 120), a block from start to end time-of-day; outages crossing midnight are split |
-| Uptime trend | Uptime % per bucket, measured only over time since tracking started |
+| 15-minute / Hourly / Daily uptime trend | Title follows the bucket size. Share of each bucket (15 minutes, hour or day) with power, measured only over time since tracking started and up to now |
 | Calendar | Whole months covering the window (up to about a year), coloured by daily downtime |
 | Weekly pattern | Heatmap of downtime minutes by weekday × hour |
 | When outages start | Count of outage starts by hour of day |
@@ -274,7 +296,7 @@ mobile page:
   | Tab | Shows |
   |---|---|
   | Now | Status card, 4 key stats ("More stats" reveals the other 4), the on/off chart, the 3 latest outages |
-  | Trends | Outages per day, outage timeline, uptime trend |
+  | Trends | Outages per period, outage timeline, uptime trend |
   | Patterns | Calendar, weekly pattern, start hours, durations |
   | History | The outage list |
 
@@ -290,8 +312,8 @@ mobile page:
   ⇔ "Custom" button and is resized when it opens.
 - **Lazy drawing:** charts on hidden tabs aren't drawn until their tab is opened (the
   same `IntersectionObserver` lazy-draw), and charts are resized when a tab is shown.
-- **Tap a day:** in "Outages per day", tapping a day switches to History filtered to
-  that day.
+- **Tap a period:** in "Outages per …", tapping a bar switches to History filtered to
+  that period.
 - **iPhone edges:** `viewport-fit=cover` and `env(safe-area-inset-bottom)` keep the
   tab bar clear of the home indicator.
 

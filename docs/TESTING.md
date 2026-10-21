@@ -7,8 +7,8 @@ throwaway databases and servers on `127.0.0.1`.
 
 | Suite | Tests | What it covers | Tool | File(s) |
 |---|---|---|---|---|
-| **Backend** | 53 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
-| **Frontend logic** | 24 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
+| **Backend** | 57 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
+| **Frontend logic** | 26 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
 | **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
 ## Requirements
@@ -111,7 +111,11 @@ machine.
   - A restart after a long gap records an approximate (`inferred`) outage; a short
     gap records nothing.
   - A restart in the middle of an outage continues it.
-  - The status snapshot has all its fields.
+  - The status snapshot has all its fields. Its local ISO times (`*_local`) carry a
+    UTC offset and match the unix timestamps exactly. `utc_offset` is well-formed,
+    and a known instant formats as `2026-10-21T09:53:18+05:30` in Asia/Kolkata.
+  - The time zone name is found from `TZ`, `/etc/timezone`, the `/etc/localtime`
+    link, or the abbreviation fallback.
   - The polling loop runs and stops promptly.
 - **Sensor check:** `Mains On` counts as power (case-insensitive, matched anywhere
   in the reply). Other text, HTTP errors, timeouts and an unreachable sensor all
@@ -139,7 +143,8 @@ America/New_York.
   rounding edge cases.
 - **Overlaps:** outages clipped to a window, and ongoing outages measured up to now.
 - **Buckets:**
-  - Hourly buckets for windows up to 2 days, aligned to local hours.
+  - 15-minute buckets for windows up to 6 hours (the 3h default) and hourly buckets
+    up to 2 days, both aligned to the local clock.
   - Daily buckets that follow the local calendar.
   - Daylight-saving days of 23 and 25 hours.
 - **Stats:**
@@ -150,7 +155,8 @@ America/New_York.
   - Days with a cut, counted in local days.
 - **Chart data:**
   - The step chart's points.
-  - Per-bucket counts and downtime, and uptime per bucket.
+  - Per-bucket counts and downtime, and uptime per bucket, including 0% for a period
+    with no power at all (reproduced from a live outage).
   - The timeline: newest day first, midnight splitting, the day limit, and DST days.
   - Calendar month ranges.
   - Weekday × hour minutes, including the UTC+5:30 regression and splits across hours

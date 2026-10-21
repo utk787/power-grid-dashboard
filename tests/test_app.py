@@ -13,6 +13,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -211,8 +212,47 @@ class MonitorTests(TempDB):
         m = app.Monitor(self.store)
         m.record(True, T0)
         snap = m.snapshot()
-        self.assertEqual(set(snap), {"state", "since", "checked", "now", "tracking_since", "poll", "v"})
+        self.assertEqual(set(snap), {"state", "since", "checked", "now", "tracking_since", "poll", "v",
+                                     "timezone", "utc_offset", "since_local", "checked_local", "now_local"})
         self.assertEqual((snap["state"], snap["checked"], snap["poll"]), ("on", T0, 5))
+
+    def test_snapshot_local_times_match_unix_timestamps(self):
+        m = app.Monitor(self.store)
+        m.record(True, T0)
+        snap = m.snapshot()
+        for key in ("since", "checked", "now"):
+            parsed = datetime.fromisoformat(snap[key + "_local"])
+            self.assertIsNotNone(parsed.tzinfo, key)               # carries its UTC offset
+            self.assertEqual(int(parsed.timestamp()), snap[key], key)
+        self.assertRegex(snap["utc_offset"], r"^[+-]\d\d:\d\d$")
+        self.assertEqual(snap["now_local"][-6:], snap["utc_offset"])
+        self.assertEqual(snap["timezone"], app.TIMEZONE)
+
+    def test_snapshot_local_time_is_null_before_first_check(self):
+        self.assertIsNone(app.Monitor(self.store).snapshot()["checked_local"])
+
+    def test_local_iso_uses_process_time_zone(self):
+        try:
+            with mock.patch.dict(app.os.environ, {"TZ": "Asia/Kolkata"}):
+                time.tzset()
+                self.assertEqual(app.local_iso(1792556598), "2026-10-21T09:53:18+05:30")
+        finally:
+            time.tzset()  # back to the original zone (patch.dict has restored TZ by now)
+
+    def test_timezone_name_sources(self):
+        with mock.patch.dict(app.os.environ, {"TZ": "Europe/London"}):
+            self.assertEqual(app.timezone_name(), "Europe/London")
+        with mock.patch.dict(app.os.environ, {"TZ": ""}), \
+                mock.patch.object(app.Path, "read_text", return_value="Asia/Kolkata\n"):
+            self.assertEqual(app.timezone_name(), "Asia/Kolkata")
+        with mock.patch.dict(app.os.environ, {"TZ": ""}), \
+                mock.patch.object(app.Path, "read_text", side_effect=OSError), \
+                mock.patch.object(app.os, "readlink", return_value="/usr/share/zoneinfo/America/New_York"):
+            self.assertEqual(app.timezone_name(), "America/New_York")
+        with mock.patch.dict(app.os.environ, {"TZ": ""}), \
+                mock.patch.object(app.Path, "read_text", side_effect=OSError), \
+                mock.patch.object(app.os, "readlink", side_effect=OSError):
+            self.assertEqual(app.timezone_name(), time.strftime("%Z"))
 
     def test_run_loop_polls_and_stops_promptly(self):
         m = app.Monitor(self.store)
