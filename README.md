@@ -15,7 +15,7 @@ The page:
 - **Range slider:** 3h (default) / 12h / 24h / 7d / 30d / 90d / All presets. It drives everything below
   it, including the outage list at the bottom
 - **Reliability stats**
-- **Eight interactive charts:** on/off step chart, outages per period (15 min / hour / day), outage timeline,
+- **Eight interactive charts:** on/off step chart (on desktop, drag across it to zoom into any time range), outages per period (15 min / hour / day), outage timeline,
   uptime trend, calendar, weekday × hour pattern, start-time histogram, duration
   breakdown
 
@@ -50,9 +50,9 @@ node --test tests/frontend/   # frontend logic only
 
 There are four suites, and none need packages installed:
 
-- **Backend:** 58 Python `unittest` tests, covering config loading
+- **Backend:** 62 Python `unittest` tests, covering config loading
 - **Backfill tool:** 14 Python tests for importing the old logger's files
-- **Frontend logic:** 26 Node `node:test` tests, run in UTC+5:30 and DST time zones
+- **Frontend logic:** 28 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
 
@@ -66,7 +66,7 @@ what's covered.
   logs, upgrades,
   troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, data
-  model, HTTP API, frontend design, failure modes, design decisions
+  model, HTTP API (including `/api/outages/range` for querying up to a week of outages), frontend design, failure modes, design decisions
 - [docs/TESTING.md](docs/TESTING.md): running the tests locally, what each suite
   covers, adding tests
 

@@ -237,3 +237,27 @@ test('durationGroups: boundaries and totals, ongoing measured to now', () => {
   assert.deepEqual(g.map(r => r.name), ['Under 5 min', '5–30 min', '30 min – 2 h', 'Over 2 h']);
   assert.equal(g[3].d, 7200 + 19900);
 });
+
+test('weekHourCoverage: seconds of each local weekday-hour inside the window', () => {
+  const week = PS.weekHourCoverage(at(2026, 10, 19), at(2026, 10, 26));          // Mon 19 Oct .. Mon 26 Oct
+  assert.ok(week.flat().every(s => s === H));
+  const part = PS.weekHourCoverage(at(2026, 10, 20, 19, 30), at(2026, 10, 20, 21));  // Tue 19:30-21:00 IST
+  assert.equal(part[1][19], 30 * 60);
+  assert.equal(part[1][20], H);
+  assert.equal(part.flat().reduce((a, b) => a + b), 90 * 60);
+});
+
+test('weekHourAverage: average minutes per hour, 0-60, null where the window has no data', () => {
+  // Two weeks; a 30-min outage in one Tue 19:00 hour -> 15 min per Tue 19:00 hour on average.
+  const from = at(2026, 10, 12), to = at(2026, 10, 26);
+  const O = [[at(2026, 10, 20, 19), at(2026, 10, 20, 19, 30), 0], [at(2026, 10, 14, 8), at(2026, 10, 14, 10), 0]];
+  const avg = PS.weekHourAverage(O, from, to, to);
+  assert.equal(avg[1][19], 15);
+  assert.equal(avg[2][8], 30);     // Wed 08:00 out in 1 of 2 weeks
+  assert.equal(avg[2][9], 30);
+  assert.equal(avg[0][0], 0);
+  assert.ok(avg.flat().every(m => m >= 0 && m <= 60));
+  const short = PS.weekHourAverage(O, at(2026, 10, 20, 19), at(2026, 10, 20, 20), at(2026, 10, 21));
+  assert.equal(short[1][19], 30);  // the single covered hour
+  assert.equal(short[1][18], null);
+});

@@ -13,7 +13,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -440,6 +440,59 @@ class HttpTests(TempDB):
         self.assertEqual(self.get_json("/api/outages?days=0")["outages"], [])
         self.store.start_outage(int(time.time()))
         self.assertEqual(len(self.get_json("/api/outages?days=0")["outages"]), 1)
+
+    def test_outage_range_returns_overlapping_outages(self):
+        base = int(time.time()) - 10 * 86400
+        for s, e in [(base - 600, base + 600), (base + 3600, base + 7200), (base + 8 * 86400, base + 8 * 86400 + 60)]:
+            self.store.start_outage(s)
+            self.store.end_outage(e)
+        r = self.get_json("/api/outages/range?from=%d&to=%d" % (base, base + 86400))
+        self.assertEqual(r["count"], 2)                                    # the one 8 days later is outside
+        first, second = r["outages"]
+        self.assertEqual((first["start"], first["end"], first["duration_s"], first["in_range_s"]), (base - 600, base + 600, 1200, 600))
+        self.assertEqual(second["in_range_s"], 3600)
+        self.assertEqual(r["total_outage_s"], 4200)
+        self.assertFalse(first["ongoing"] or first["approximate"])
+        self.assertEqual(first["start_local"], app.local_iso(base - 600))
+        self.assertEqual((r["from"], r["to"], r["max_range_s"], r["timezone"]), (base, base + 86400, 7 * 86400, app.TIMEZONE))
+
+    def test_outage_range_ongoing_outage_counts_up_to_now(self):
+        now = int(time.time())
+        self.store.start_outage(now - 300)
+        r = self.get_json("/api/outages/range?from=%d&to=%d" % (now - 3600, now + 3600))
+        (o,) = r["outages"]
+        self.assertTrue(o["ongoing"])
+        self.assertIsNone(o["end"])
+        self.assertAlmostEqual(o["in_range_s"], 300, delta=5)
+
+    def test_outage_range_accepts_iso_times(self):
+        utc = lambda *a: datetime(*a, tzinfo=timezone.utc).timestamp()
+        cases = {"from=2026-10-14&to=2026-10-15": (datetime(2026, 10, 14).timestamp(), datetime(2026, 10, 15).timestamp()),
+                 "from=2026-10-14T09:00%2B05:30&to=2026-10-14T10:30%2B05:30": (utc(2026, 10, 14, 3, 30), utc(2026, 10, 14, 5)),
+                 "from=2026-10-14T03:30:00Z&to=2026-10-14T05:00:00Z": (utc(2026, 10, 14, 3, 30), utc(2026, 10, 14, 5))}
+        for query, (a, b) in cases.items():
+            with self.subTest(query=query):
+                r = self.get_json("/api/outages/range?" + query)
+                self.assertEqual((r["from"], r["to"]), (a, b))
+
+    def test_outage_range_limits_and_errors(self):
+        week = 7 * 86400
+        self.assertEqual(self.get("/api/outages/range?from=1792000000&to=%d" % (1792000000 + week))[0], 200)  # exactly a week
+        cases = [("from=1792000000&to=%d" % (1792000000 + week + 1), "too large"),
+                 ("from=2026-10-01&to=2026-10-09", "8.00 days requested"),
+                 ("from=1792000000", "missing 'to'"),
+                 ("to=1792000000", "missing 'from'"),
+                 ("from=yesterday&to=1792000000", "not a time"),
+                 ("from=1792000000&to=1792000000", "must be after"),
+                 ("from=inf&to=1792000000", "out of range")]
+        for query, fragment in cases:
+            with self.subTest(query=query):
+                status, headers, body = self.get("/api/outages/range?" + query)
+                self.assertEqual(status, 400)
+                self.assertEqual(headers["Content-Type"], "application/json")
+                err = json.loads(body)
+                self.assertIn(fragment, err["error"])
+                self.assertEqual(err["max_range_s"], week)
 
     def test_readings_endpoint(self):
         for ts, ok in [(100, 1), (200, 0), (300, 1)]:

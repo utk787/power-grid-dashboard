@@ -43,7 +43,7 @@ flowchart LR
 | `index.html` | The frontend's CSS, markup and rendering JS (text formatting, DOM, chart options). Server-side placeholders: `{{SITE_NAME}}`, `{{BOOT}}` and `{{CORE_JS}}` |
 | `static/core.js` | Pure data logic (bucketing, stats, chart data) with no DOM or clock access. Inlined into the page by the server and `require()`d by the Node tests |
 | `tests/` | Backend, frontend logic and browser smoke tests. See [TESTING.md](TESTING.md) |
-| `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, visual-map, calendar and mark-area components; canvas renderer) |
+| `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, toolbox (for drag-to-zoom), visual-map, calendar and mark-area components; canvas renderer) |
 | `tools/backfill_logs.py` | Imports the old logger's `power-status*.log` history into `power.db` (see ADMINISTRATION.md §9) |
 | `tools/echarts/` | `package.json` and `entry.js` that build the bundle. Only needed to change chart types; the Pi never needs Node |
 | `powersensor.service` | systemd unit (runs `app.py --config …/config.ini`) |
@@ -186,6 +186,7 @@ minute. A year with three outages a day is roughly 2–3 k rows per table, well 
 | `GET /` | `index.html` with `{{BOOT}}` replaced by JSON: `status` (a `/api/status` snapshot), `outages` (all rows), `echarts` (versioned script URL) | `no-store` |
 | `GET /api/status` | `{state, since, checked, now, tracking_since, poll, v, timezone, utc_offset, since_local, checked_local, now_local}` (example below) | `no-store` |
 | `GET /api/outages?days=N` | `{days, outages: [[start, end\|null, inferred], …]}`, newest first. `days=0` returns all (capped at 20 000 rows) | `no-store` |
+| `GET /api/outages/range?from=&to=` | Outages overlapping a window of **at most 7 days**, oldest first, with local times and totals (details below). Errors return HTTP 400 with JSON `{error, max_range_s}` | `no-store` |
 | `GET /api/readings?from=&to=` | `{from, to, readings: [[ts, ok], …]}`, oldest first; defaults to the last 24 h, capped at 100 000 rows | `no-store` |
 | `GET /static/<file>` | Files from `static/`, read and gzip-9 compressed once at startup | `public, max-age=31536000, immutable` |
 | `GET /healthz` | `ok`. Proves the HTTP server is up, **not** that polling works | `no-store` |
@@ -210,6 +211,32 @@ Notes:
    "since_local": "2026-10-21T09:53:18+05:30",
    "checked_local": "2026-10-21T11:07:46+05:30",
    "now_local": "2026-10-21T11:07:51+05:30"}
+  ```
+- **`/api/outages/range`** is the query API for other tools and scripts.
+  - **Inputs:** `from` and `to` each take Unix seconds, or ISO 8601 such as
+    `2026-10-14`, `2026-10-14T09:00`, `2026-10-14T09:00+05:30` or `…Z`. A time
+    without an offset is the Pi's local time; in a URL, `+` must be written `%2B`.
+  - **Errors (HTTP 400):** a window longer than 7 days (`MAX_QUERY_RANGE` in
+    `app.py`), a missing or unreadable time, or `to` not after `from`. The error
+    message names the problem and the limit; split a longer period into several
+    queries.
+  - **What's returned:** every outage that overlaps the window, including one that
+    started before it or is still ongoing. Each has its full `duration_s` and the
+    part of it inside the window, `in_range_s`; `total_outage_s` is the sum of the
+    `in_range_s` values.
+
+  ```json
+  {"from": 1792348200.0, "to": 1792434600.0, "from_local": "2026-10-19T00:00:00+05:30",
+   "to_local": "2026-10-20T00:00:00+05:30", "timezone": "Asia/Kolkata", "max_range_s": 604800,
+   "count": 4, "total_outage_s": 3854.384,
+   "outages": [{"start": 1792380529.805, "end": 1792383633.268,
+                "start_local": "2026-10-19T08:58:49+05:30", "end_local": "2026-10-19T09:50:33+05:30",
+                "ongoing": false, "approximate": false, "duration_s": 3103.463, "in_range_s": 3103.463}, …]}
+  ```
+
+  ```text
+  GET /api/outages/range?from=2026-10-01&to=2026-10-09
+  400 {"error": "time range too large: 8.00 days requested, at most 7 days (604800 s) allowed; …", "max_range_s": 604800}
   ```
 - `v` in `/api/status` is `Store.version`, an in-memory counter bumped on every
   outage insert or update. Clients reload outages when it changes.
@@ -274,12 +301,12 @@ Every chart works from the same in-memory list of outage rows:
 
 | Chart | What it shows |
 |---|---|
-| Power on/off | Step line plus red bands for outages. 300 sample points are added so the tooltip works anywhere along the line |
+| Power on/off | Step line plus red bands for outages. 300 sample points are added so the tooltip works anywhere along the line. **Desktop:** drag across the chart to zoom into that time range (the toolbox's dataZoom select mode, with its icons hidden), adjust with the zoom bar underneath, and reset with the button or a double-click. The zoomed span gets 300 extra samples, so tooltips stay exact at any zoom. The zoom survives data refreshes and is cleared when the window changes. Phones don't get it, because dragging there scrolls the page |
 | Outages per day / hour / 15 minutes | Bars of downtime per bucket and a line of outage starts per bucket. Tapping a bucket filters the list |
 | Outage timeline | Custom series: one row per day (latest 120), a block from start to end time-of-day; outages crossing midnight are split |
 | 15-minute / Hourly / Daily uptime trend | Title follows the bucket size. Share of each bucket (15 minutes, hour or day) with power, measured only over time since tracking started and up to now |
-| Calendar | Whole months covering the window (up to about a year), coloured by daily downtime |
-| Weekly pattern | Heatmap of downtime minutes by weekday × hour |
+| Calendar | Whole months covering the window (up to about a year), coloured by hours without power that day: none bright green · up to 2 h green · 2–3 h orange · 3–4 h blood red · over 4 h deep red (`CAL_BANDS`) |
+| Weekly pattern | Heatmap of the **average minutes without power per hour** for each weekday × hour: downtime divided by how much of that slot the window covers, so it's always 0–60. Colours: none bright green · up to 10 orange · then blood red through to deep red at 45–60 (`HEAT_BANDS`), with a legend. Slots the window doesn't cover are blank. On long windows the averages are small, so most cells fall in the orange band |
 | When outages start | Count of outage starts by hour of day |
 | How long outages last | Counts in < 5 m, 5–30 m, 30 m–2 h and > 2 h groups |
 
@@ -355,7 +382,7 @@ mobile page:
   server round trips and no summary tables that could drift from the raw data.
 - **Trimmed ECharts, self-hosted.** It is the only library with step lines, a range
   slider, heatmaps, a calendar and custom timelines built in. Tree-shaking cuts it to
-  about 200 KB gzipped, cached for a year. Self-hosting keeps the dashboard working on
+  about 215 KB gzipped, cached for a year. Self-hosting keeps the dashboard working on
   the LAN when the internet is down.
 - **Status first, charts later.** The question most visitors have ("is power on?") is
   answered from the first response, before any JS library loads.

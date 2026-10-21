@@ -63,6 +63,8 @@ nav button[aria-pressed=true]{background:var(--text);color:var(--card);border-co
 .chip{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;padding:6px 14px;font:inherit;font-size:.85rem;cursor:pointer}
 .day .chip{padding:3px 10px;font-size:.8rem;margin-left:6px}
 #more{display:block;margin:14px auto 0}
+h3 .chip{padding:2px 10px;font-size:.75rem;font-weight:500;margin-left:8px;vertical-align:1px}
+#c-step canvas{cursor:crosshair}
 footer{margin-top:28px;text-align:center}
 /* Desktop: every section shows on one page; phone-only controls are hidden. */
 #tabs,#custom,#morestats,#recent,.short{display:none}
@@ -136,12 +138,12 @@ footer{margin-top:28px;text-align:center}
     <button class="chip" id="morestats" aria-expanded="false">More stats ▾</button>
   </div>
 
-  <section class="card chart" data-tab="now"><header><h3>Power on / off</h3><span class="small">High = power on, low = outage. Hover or tap for times.</span></header><div class="c" id="c-step">Loading chart…</div></section>
+  <section class="card chart" data-tab="now"><header><h3>Power on / off <button class="chip" id="zoom-reset" hidden>Reset zoom</button></h3><span class="small" id="step-sub">High = power on, low = outage. Hover or tap for times.</span></header><div class="c" id="c-step">Loading chart…</div></section>
   <section class="card chart" data-tab="trends"><header><h3 id="daily-title">Outages per day</h3><span class="small" id="daily-sub">Bars: total time without power · line: number of outages. Tap a day to list its outages.</span></header><div class="c" id="c-daily">Loading chart…</div></section>
   <section class="card chart" data-tab="trends"><header><h3>Outage timeline</h3><span class="small" id="tl-sub">When each outage happened and how long it lasted.</span></header><div class="c" id="c-timeline">Loading chart…</div></section>
   <section class="card chart" data-tab="trends"><header><h3 id="uptime-title">Daily uptime trend</h3><span class="small" id="uptime-sub">Share of each day with power.</span></header><div class="c" id="c-uptime">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>Calendar</h3><span class="small">Each square is a day, coloured by time without power. Shows whole months.</span></header><div class="c" id="c-cal">Loading chart…</div></section>
-  <section class="card chart" data-tab="patterns"><header><h3>Weekly pattern</h3><span class="small">Total time without power by weekday and hour. Darker = more.</span></header><div class="c" id="c-heat">Loading chart…</div></section>
+  <section class="card chart" data-tab="patterns"><header><h3>Weekly pattern</h3><span class="small">Average minutes without power in each hour of the week. Blank = no data for that hour.</span></header><div class="c" id="c-heat">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>When outages start</h3><span class="small">Number of outages starting in each hour of the day.</span></header><div class="c" id="c-hour">Loading chart…</div></section>
   <section class="card chart" data-tab="patterns"><header><h3>How long outages last</h3><span class="small">Outages grouped by length.</span></header><div class="c" id="c-dur">Loading chart…</div></section>
 
@@ -335,14 +337,76 @@ const base = extra => Object.assign({
 }, extra);
 const axis = extra => Object.assign({axisLine: {lineStyle: {color: C.line}}, axisTick: {show: false},
   splitLine: {lineStyle: {color: C.line, type: 'dashed'}}, axisLabel: {color: C.muted, hideOverlap: true}}, extra);
-const tip = (title, lines) => '<b>' + title + '</b>' + lines.map(l => '<br>' + l).join('');
+const tip = (title, lines) => '<b>' + title + '</b>' + lines.filter(Boolean).map(l => '<br>' + l).join('');
+
+// Desktop only: drag across "Power on / off" to zoom into a time range. stepZoom holds that
+// range ([from, to] in seconds) so data refreshes keep it; choosing a new window clears it.
+let stepZoom = null;
+const zoomable = () => !phone.matches;
+// Coarse points for the whole window plus dense ones for the zoomed span, so the tooltip
+// stays exact however far you zoom in.
+function stepPoints() {
+  const t = now(), pts = PS.stepPoints(O, W.from, W.to, t);
+  return (stepZoom ? pts.concat(PS.stepPoints(O, stepZoom[0], stepZoom[1], t)).sort((a, b) => a[0] - b[0]) : pts)
+    .map(p => [p[0] * 1000, p[1]]);
+}
+function showZoom() {
+  const z = stepZoom, fmt = ts => (W.to - W.from > 86400 ? sdf.format(ts * 1000) + ' ' : '') + time(ts);
+  $('zoom-reset').hidden = !z;
+  $('zoom-reset').textContent = z ? 'Reset zoom (' + fmt(z[0]) + ' – ' + fmt(z[1]) + ')' : 'Reset zoom';
+}
+function resetZoom() {
+  stepZoom = null;
+  showZoom();
+  if (inst.step) inst.step.dispatchAction({type: 'dataZoom', start: 0, end: 100});
+}
+$('zoom-reset').onclick = resetZoom;
+
+// Calendar day colours by hours without power that day (same in light and dark themes).
+const CAL_BANDS = [
+  {value: 0, label: 'none', color: '#22c55e'},              // bright green
+  {gt: 0, lte: 2, label: '≤ 2h', color: '#15803d'},         // green
+  {gt: 2, lte: 3, label: '2–3h', color: '#f97316'},         // orange
+  {gt: 3, lte: 4, label: '3–4h', color: '#b91c1c'},         // blood red
+  {gt: 4, label: '4h +', color: '#6b0f0f'},                  // deep red
+];
+
+// Weekly pattern colours by average minutes without power in that hour (0–60).
+const HEAT_BANDS = [
+  {value: 0, label: 'none', color: '#22c55e'},              // bright green
+  {gt: 0, lte: 10, label: '≤10', color: '#f97316'},         // orange
+  {gt: 10, lte: 20, label: '10–20', color: '#b91c1c'},      // blood red …
+  {gt: 20, lte: 30, label: '20–30', color: '#991b1b'},
+  {gt: 30, lte: 45, label: '30–45', color: '#7f1d1d'},
+  {gt: 45, label: '45–60 min', color: '#5c0a0a'},           // … to deep red
+];
 
 const charts = {
-  step() {
-    const os = inWindow(), pts = PS.stepPoints(O, W.from, W.to, now());
+  step(elm) {
+    if (stepZoom && (stepZoom[0] < W.from || stepZoom[1] > W.to + 60)) stepZoom = null;  // window moved on
+    const os = inWindow(), z = zoomable();
+    $('step-sub').textContent = z ? 'High = power on, low = outage. Drag across the chart to zoom into a time range; hover for times.'
+                                  : 'High = power on, low = outage. Hover or tap for times.';
+    elm.style.height = z ? '260px' : '';
+    showZoom();
     return base({
+      grid: {left: 8, right: 18, top: 14, bottom: z ? 40 : 4, containLabel: true},
+      // Only the toolbox's "dataZoom" select mode is used (switched on in draw()); its icons are
+      // invisible because the toolbox must be shown for the select mode to work.
+      toolbox: z ? {show: true, right: 0, top: 0, itemSize: 1, iconStyle: {opacity: 0, borderWidth: 0},
+                    emphasis: {iconStyle: {opacity: 0}}, feature: {dataZoom: {yAxisIndex: 'none', title: {zoom: '', back: ''}}}} : undefined,
+      dataZoom: z ? [{type: 'slider', xAxisIndex: 0, filterMode: 'none', bottom: 6, height: 20, left: 50, right: 18,
+        startValue: (stepZoom ? stepZoom[0] : W.from) * 1000, endValue: (stepZoom ? stepZoom[1] : W.to) * 1000,
+        minValueSpan: 60 * 1000, showDetail: false, brushSelect: false,
+        borderColor: C.line, backgroundColor: C.bar, fillerColor: 'rgba(127,127,127,.18)',
+        handleStyle: {color: C.card, borderColor: C.muted}, moveHandleStyle: {color: C.muted},
+        dataBackground: {lineStyle: {color: C.on, opacity: 0.5}, areaStyle: {color: C.on, opacity: 0.15}},
+        selectedDataBackground: {lineStyle: {color: C.on}, areaStyle: {color: C.on, opacity: 0.3}}}] : undefined,
       tooltip: tooltip({trigger: 'axis', formatter: ps => {
-        const t = ps[0].value[0] / 1000, o = os.find(o => o[0] <= t && t < end(o));
+        // While zooming the data is swapped for a finer version; a tooltip can land in between.
+        const v = ps[0] && (ps[0].value || [ps[0].axisValue]);
+        if (!v || v[0] == null) return '';
+        const t = v[0] / 1000, o = os.find(o => o[0] <= t && t < end(o));
         if (!o) return tip('🟢 Power on', [dayName(t) + ', ' + time(t)]);
         return tip('🔴 Power off', [when(o[0]) + ' → ' + (o[1] == null ? 'now' : time(o[1])), 'Lasted ' + dur(end(o) - o[0]) + (o[1] == null ? ' so far' : '')]);
       }}),
@@ -350,7 +414,7 @@ const charts = {
       yAxis: axis({type: 'value', min: 0, max: 1, interval: 1, axisLabel: {color: C.muted, formatter: v => v ? 'On' : 'Off'}}),
       series: [{type: 'line', step: 'end', symbol: 'none', lineStyle: {width: 2, color: C.on}, itemStyle: {color: C.on},
         areaStyle: {color: C.on, opacity: 0.15},
-        data: pts.map(p => [p[0] * 1000, p[1]]),
+        data: stepPoints(),
         markArea: {silent: true, itemStyle: {color: C.off, opacity: 0.35},
           data: os.map(o => [{xAxis: Math.max(o[0], W.from) * 1000}, {xAxis: Math.min(end(o), W.to) * 1000}])}}],
     });
@@ -440,8 +504,7 @@ const charts = {
       }}),
       visualMap: {type: 'piecewise', orient: 'horizontal', left: 'center', bottom: 0, itemWidth: 12, itemHeight: 12, itemGap: 8,
         textStyle: {color: C.muted, fontSize: 11},
-        pieces: [{value: 0, label: 'none', color: C['on-bg']}, {gt: 0, lte: 0.5, label: '< 30m', color: C['off-bg']},
-                 {gt: 0.5, lte: 2, label: '< 2h', color: C['off-mid']}, {gt: 2, label: '2h +', color: C.off}]},
+        pieces: CAL_BANDS},
       calendar: {range: [isoDay(start), isoDay(stop)], orient, cellSize: cell, top: horiz ? 24 : 30,
         left: horiz ? 36 : 'center',
         splitLine: {show: false}, itemStyle: {color: C.bar, borderColor: C.card, borderWidth: 2},
@@ -453,22 +516,27 @@ const charts = {
   },
 
   heat(elm) {
-    // Minutes without power per (weekday, hour), Monday first.
-    const grid = PS.weekHour(O, W.from, W.to, now());
+    // Average minutes without power in each hour of the week (Monday first), measured only over
+    // the part of the window that has data. Hours the window doesn't cover stay blank.
+    const t = now(), from = Math.max(W.from, dataStart()), to = Math.min(W.to, t);
+    const avg = PS.weekHourAverage(O, from, to, t), total = PS.weekHour(O, from, to, t), cover = PS.weekHourCoverage(from, to);
     const wf = new Intl.DateTimeFormat([], {weekday: 'short'}), names = [...Array(7)].map((_, i) => wf.format(new Date(2024, 0, 1 + i)));
     const data = [];
-    let max = 0;
-    grid.forEach((row, wd) => row.forEach((m, h) => { data.push([h, wd, Math.round(m)]); max = Math.max(max, m); }));
-    elm.style.height = '250px';
+    avg.forEach((row, wd) => row.forEach((m, h) => data.push([h, wd, m == null ? '-' : Math.round(m * 10) / 10])));
+    elm.style.height = '290px';
     return base({
-      grid: {left: 8, right: 8, top: 6, bottom: 4, containLabel: true},
+      grid: {left: 8, right: 8, top: 6, bottom: 40, containLabel: true},
       tooltip: tooltip({trigger: 'item', formatter: p => {
-        const [h, wd, m] = p.value;
-        return tip(names[wd] + ' ' + hourName(h) + '–' + hourName((h + 1) % 24), [m ? 'Without power: <b>' + dur(m * 60) + '</b> in total' : 'No outages']);
+        const [h, wd, m] = p.value, hours = cover[wd][h] / 3600, slot = names[wd] + ' ' + hourName(h) + '–' + hourName((h + 1) % 24);
+        if (m === '-') return tip(slot, ['No data in this period']);
+        if (!m) return tip(slot, ['No outages', hours > 1.5 ? 'over ' + Math.round(hours) + ' such hours' : '']);
+        return tip(slot, ['Without power: <b>' + dur(m * 60) + '</b> per hour on average',
+          (hours > 1.5 ? dur(total[wd][h] * 60) + ' in total over ' + Math.round(hours) + ' such hours' : '')]);
       }}),
       xAxis: axis({type: 'category', data: [...Array(24)].map((_, h) => hourName(h)), splitLine: {show: false}, axisLabel: {color: C.muted, interval: narrow() ? 5 : 2}}),
       yAxis: axis({type: 'category', inverse: true, data: names, splitLine: {show: false}}),
-      visualMap: {show: false, min: 0, max: Math.max(1, max), inRange: {color: [C.bar, C['off-mid'], C.off]}},
+      visualMap: {type: 'piecewise', pieces: HEAT_BANDS, orient: 'horizontal', left: 'center', bottom: 0, itemWidth: 10, itemHeight: 10,
+        itemGap: 5, textGap: 3, textStyle: {color: C.muted, fontSize: 10.5}},
       series: [{type: 'heatmap', data, itemStyle: {borderColor: C.card, borderWidth: 1.5, borderRadius: 3}}],
     });
   },
@@ -511,6 +579,19 @@ function draw(name) {
   if (!inst[name]) {
     elm.textContent = ''; elm.style.display = 'block';
     inst[name] = ec.init(elm, null, {renderer: 'canvas'});
+    if (name === 'step') {
+      inst.step.on('datazoom', () => {
+        const dz = (inst.step.getOption().dataZoom || []).find(d => d.type === 'slider');
+        if (!dz) return;
+        const a = dz.startValue / 1000, b = dz.endValue / 1000;
+        stepZoom = b - a >= (W.to - W.from) * 0.999 ? null : [a, b];
+        showZoom();
+        // Re-sample for the new span (merge keeps the zoom); throttled to one update per frame.
+        cancelAnimationFrame(inst.step._raf);
+        inst.step._raf = requestAnimationFrame(() => inst.step.setOption({series: [{data: stepPoints()}]}));
+      });
+      inst.step.getZr().on('dblclick', () => { if (stepZoom) resetZoom(); });
+    }
     if (name === 'daily') inst.daily.getZr().on('click', e => {
       const p = inst.daily.convertFromPixel({seriesIndex: 0}, [e.offsetX, e.offsetY]);
       const b = p && buckets().list[Math.round(p[0])];
@@ -524,6 +605,10 @@ function draw(name) {
   const opt = charts[name](elm);
   inst[name].resize();
   inst[name].setOption(opt, true);
+  if (name === 'step' && zoomable()) {
+    // Keep drag-to-select zoom switched on (setOption with notMerge turns it off).
+    inst.step.dispatchAction({type: 'takeGlobalCursor', key: 'dataZoomSelect', dataZoomSelectActive: true});
+  }
   dirty.delete(name);
 }
 function redrawCharts() {
@@ -566,7 +651,7 @@ function onRange() {
   const dz = range.getOption().dataZoom[0], t = now();
   W = {from: dz.startValue / 1000, to: Math.min(t, dz.endValue / 1000), live: t - dz.endValue / 1000 < 3600};
   if (W.live) W.to = t;
-  preset = null; filter = null; listLimit = 100;
+  preset = null; filter = null; listLimit = 100; stepZoom = null;
   renderPresets(); renderStats(); renderList();
   clearTimeout(pending); pending = setTimeout(redrawCharts, 150);
 }
@@ -585,7 +670,7 @@ function renderPresets() {
 $('presets').onclick = e => {
   const b = e.target.closest('[data-h]');
   if (!b) return;
-  preset = +b.dataset.h; W = presetWindow(preset); filter = null; listLimit = 100;
+  preset = +b.dataset.h; W = presetWindow(preset); filter = null; listLimit = 100; stepZoom = null;
   try { localStorage.setItem('range-h', b.dataset.h); } catch (err) {}
   renderAll();
 };

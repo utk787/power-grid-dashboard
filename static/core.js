@@ -154,6 +154,28 @@
     return grid;
   }
 
+  // Seconds of the window that fall in each [weekday][hour] slot (Monday = 0, local time): how
+  // much of that slot the window covers. Dividing weekHour() by this gives average minutes
+  // without power per hour, which is always 0–60 however long the window is.
+  function weekHourCoverage(from, to) {
+    const grid = [...Array(7)].map(() => Array(24).fill(0));
+    let a = from;
+    while (a < to) {
+      const d = new Date(a * 1000), next = new Date(d); next.setMinutes(60, 0, 0);
+      const b = Math.min(to, next.getTime() / 1000);
+      grid[(d.getDay() + 6) % 7][d.getHours()] += b - a;
+      a = b;
+    }
+    return grid;
+  }
+
+  // Average minutes without power per hour in each [weekday][hour] slot; null where the window
+  // doesn't cover that slot at all.
+  function weekHourAverage(outages, from, to, now) {
+    const down = weekHour(outages, from, to, now), cover = weekHourCoverage(from, to);
+    return down.map((row, wd) => row.map((minutes, h) => cover[wd][h] ? Math.min(60, minutes * 3600 / cover[wd][h]) : null));
+  }
+
   // Outages starting in each local hour of the day.
   function hourCounts(outages, from, to) {
     const counts = Array(24).fill(0);
@@ -171,5 +193,6 @@
   }
 
   return {dur, pct, midnight, addDays, isoDay, end, overlap, dataStart, inWindow, downtime, buckets, stats,
-          stepPoints, bucketRows, uptimeRows, timeline, calendar, weekHour, hourCounts, durationGroups};
+          stepPoints, bucketRows, uptimeRows, timeline, calendar, weekHour, weekHourCoverage, weekHourAverage,
+          hourCounts, durationGroups};
 });

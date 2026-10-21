@@ -15,6 +15,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import signal
 import sqlite3
@@ -192,6 +193,15 @@ class Store:
     def end_outage(self, ts):
         self._write("UPDATE outages SET end = ? WHERE end IS NULL", (ts,))
 
+    def outages_between(self, start, end):
+        """Outages that overlap [start, end), oldest first, as (start, end, inferred) rows."""
+        with self.lock:
+            return self.db.execute(
+                "SELECT start, end, inferred FROM outages WHERE start < ? AND (end IS NULL OR end > ?) "
+                "ORDER BY start",
+                (end, start),
+            ).fetchall()
+
     def outages_since(self, ts, limit=20000):
         """Outages that overlap [ts, now], newest first, as compact [start, end, inferred] rows."""
         with self.lock:
@@ -223,6 +233,31 @@ def timezone_name():
     except OSError:
         pass
     return time.strftime("%Z")
+
+
+MAX_QUERY_RANGE = 7 * 86400  # widest window /api/outages/range accepts, seconds
+TIME_HELP = "unix seconds or ISO 8601, e.g. 2026-10-14, 2026-10-14T09:00 or 2026-10-14T09:00+05:30"
+
+
+class BadRequest(ValueError):
+    """A client error; the message is returned to the caller as JSON with HTTP 400."""
+
+
+def parse_time(text, name):
+    """Unix seconds or ISO 8601 -> unix seconds. A time without an offset is the server's local time."""
+    text = (text or "").strip()
+    if not text:
+        raise BadRequest("missing '%s' (%s)" % (name, TIME_HELP))
+    try:
+        t = float(text)
+    except ValueError:
+        try:
+            t = datetime.fromisoformat(text[:-1] + "+00:00" if text[-1] in "Zz" else text).timestamp()
+        except ValueError:
+            raise BadRequest("'%s' is not a time: %r (%s)" % (name, text, TIME_HELP)) from None
+    if not math.isfinite(t) or not 0 <= t < 4102444800:  # 1970 .. 2100
+        raise BadRequest("'%s' is out of range: %r" % (name, text))
+    return t
 
 
 def local_iso(ts):
@@ -361,6 +396,34 @@ class App:
             self._cache[days] = (key, rows)
         return rows
 
+    def outage_range(self, query):
+        """Outages overlapping [from, to) for /api/outages/range; the window may be at most a week."""
+        q = parse_qs(query)
+        start = parse_time(q.get("from", [""])[0], "from")
+        end = parse_time(q.get("to", [""])[0], "to")
+        if end <= start:
+            raise BadRequest("'to' must be after 'from'")
+        if end - start > MAX_QUERY_RANGE:
+            raise BadRequest("time range too large: %.2f days requested, at most 7 days (%d s) allowed; "
+                             "query a longer period in several smaller ranges" % ((end - start) / 86400, MAX_QUERY_RANGE))
+        now = time.time()
+        outages, total = [], 0.0
+        for s, e, inferred in self.store.outages_between(start, end):
+            stop = now if e is None else e
+            inside = max(0.0, min(stop, end, now) - max(s, start))
+            total += inside
+            outages.append({
+                "start": s, "end": e, "start_local": local_iso(s), "end_local": local_iso(e),
+                "ongoing": e is None, "approximate": bool(inferred),
+                "duration_s": round(stop - s, 3),       # whole outage (so far, if ongoing)
+                "in_range_s": round(inside, 3),         # part of it inside [from, to)
+            })
+        return {
+            "from": start, "to": end, "from_local": local_iso(start), "to_local": local_iso(end),
+            "timezone": TIMEZONE, "max_range_s": MAX_QUERY_RANGE,
+            "count": len(outages), "total_outage_s": round(total, 3), "outages": outages,
+        }
+
     def page(self):
         boot = {
             "status": self.monitor.snapshot(),
@@ -409,6 +472,12 @@ def make_handler(app):
                 except ValueError:
                     days = 30
                 self.send_json({"days": days, "outages": app.outages(days)})
+            elif url.path == "/api/outages/range":
+                try:
+                    self.send_json(app.outage_range(url.query))
+                except BadRequest as e:
+                    body = json.dumps({"error": str(e), "max_range_s": MAX_QUERY_RANGE})
+                    self.send(400, body, "application/json")
             elif url.path.startswith("/static/") and url.path[8:] in app.static:
                 raw, gz, ctype = app.static[url.path[8:]]
                 self.send(200, raw, ctype, "public, max-age=31536000, immutable", gzipped=gz)

@@ -7,8 +7,8 @@ throwaway databases and servers on `127.0.0.1`.
 
 | Suite | Tests | What it covers | Tool | File(s) |
 |---|---|---|---|---|
-| **Backend** | 58 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
-| **Frontend logic** | 26 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
+| **Backend** | 62 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API (including the 7-day range query) | `python3 -m unittest` | `tests/test_app.py` |
+| **Frontend logic** | 28 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
 | **Backfill tool** | 14 | `tools/backfill_logs.py`: log parsing, merging, outage rules, safe and repeatable import, short write locks, SQL file = direct import | `python3 -m unittest` | `tests/test_backfill.py` |
 | **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
@@ -134,6 +134,12 @@ machine.
   - Static files are served pre-compressed with a one-year cache.
   - Unknown paths and path-traversal attempts get a 404.
   - `HEAD` returns no body, and `/healthz` works.
+  - The range query returns outages overlapping the window, including one that
+    started before it and an ongoing one (counted up to now), with correct
+    `in_range_s` and totals. It accepts Unix seconds, dates, `+05:30` and `Z` times.
+    Exactly 7 days is accepted. These return a JSON 400: one second over 7 days,
+    8 days, a missing `from`/`to`, an unreadable time, `to` not after `from`, and
+    `inf`.
 
 ### Frontend logic (`tests/frontend/core.test.js`)
 
@@ -162,6 +168,9 @@ America/New_York.
     with no power at all (reproduced from a live outage).
   - The timeline: newest day first, midnight splitting, the day limit, and DST days.
   - Calendar month ranges.
+  - Weekly-pattern averages: coverage of each weekday × hour slot (including half
+    hours in UTC+5:30), average minutes per hour that never exceed 60, and blank
+    slots outside the window.
   - Weekday × hour minutes, including the UTC+5:30 regression and splits across hours
     and days.
   - Start-hour counts.
@@ -210,7 +219,8 @@ history (including an inferred outage), an ongoing outage, and an empty history.
 and it's still under the 640 px phone breakpoint.
 
 - **Now tab:** the 3 latest outages and "See all" are shown, and only the on/off
-  chart is drawn. Charts on other tabs stay undrawn.
+  chart is drawn. Charts on other tabs stay undrawn. The on/off chart has no
+  drag-to-zoom on phones, while the desktop test checks that it does.
 - **Opening `#trends` and `#patterns` directly:** the right tab is selected, and
   exactly that tab's charts draw without errors.
 - **`#history`:** the outage list is shown.

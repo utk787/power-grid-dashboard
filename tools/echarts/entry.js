@@ -3,14 +3,14 @@ import * as echarts from 'echarts/core';
 import { LineChart, BarChart, HeatmapChart, CustomChart } from 'echarts/charts';
 import {
   GridComponent, TooltipComponent, DataZoomSliderComponent, VisualMapComponent,
-  CalendarComponent, MarkAreaComponent,
+  CalendarComponent, MarkAreaComponent, ToolboxComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 
 echarts.use([
   LineChart, BarChart, HeatmapChart, CustomChart,
   GridComponent, TooltipComponent, DataZoomSliderComponent, VisualMapComponent,
-  CalendarComponent, MarkAreaComponent,
+  CalendarComponent, MarkAreaComponent, ToolboxComponent,  // toolbox: drag-to-select zoom on "Power on / off"
   CanvasRenderer,
 ]);
 

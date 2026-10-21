@@ -97,6 +97,11 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertIsNotNone(m, "%s element missing" % el_id)
         return m
 
+    def step_subtitle(self, dom):
+        m = re.search(r'id="step-sub">([^<]*)<', dom)
+        self.assertIsNotNone(m, "step chart subtitle missing")
+        return m.group(1)
+
     def assert_no_console_errors(self, console):
         errors = [line for line in console if re.search(r"Uncaught|Error", line)]
         self.assertEqual(errors, [], "browser console errors")
@@ -120,6 +125,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assert_charts_rendered(dom, console)
         self.assertEqual(len(re.findall(r'class="card stat( more)?"', dom)), 8)
         self.assertIn("Monitor was offline", dom)  # inferred outage is labelled in the list
+        self.assertIn("Drag across the chart to zoom", self.step_subtitle(dom))  # desktop drag-to-zoom
 
     def test_ongoing_outage_page(self):
         self.seed(ongoing=True)
@@ -147,6 +153,7 @@ class BrowserSmokeTest(unittest.TestCase):
         recent = dom[dom.index('id="recent"'):dom.index('id="list"')]
         self.assertEqual(recent.count('class="row'), 3)
         self.assertIn("See all outages", recent)
+        self.assertNotIn("Drag across", self.step_subtitle(dom))  # no drag-zoom on phones (it would fight scrolling)
         self.assert_charts_rendered(dom, console, PHONE_TABS["now"], slider=False)
         for name in PHONE_TABS["trends"] + PHONE_TABS["patterns"]:  # other tabs stay undrawn until opened
             self.assertNotIn("<canvas", self.chart_html(dom, "c-" + name).group(1), name)
