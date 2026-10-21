@@ -157,7 +157,7 @@ visitors reach the Pi through it. No router changes are needed.
 | **Tailscale Funnel** | Free | `https://raspberrypi.<your-tailnet>.ts.net` | ~10 min | No domain needed. HTTPS included. Best zero-cost choice |
 | **Cloudflare Tunnel + own domain** | Free tunnel + domain (often ~$1–3 first year for cheap TLDs, ~$10/yr for `.com` at renewal) | `https://power.yourdomain.com` | ~20 min | Nicest URL, CDN caching, DDoS protection, analytics. **Recommended if you'll pay for a domain** |
 | Cloudflare quick tunnel | Free | Random `https://xyz.trycloudflare.com` that **changes on every restart** | 1 min | Demos only, no uptime guarantee |
-| Small VPS + reverse SSH / WireGuard | ~$0 (Oracle Cloud Always Free) to ~$4–6/month | VPS IP or your domain | 1–2 h | Full control, but you maintain a second server. Only if the tunnels above don't suit you |
+| **Oracle Cloud VM + reverse SSH tunnel** (Option C) | Free (Always Free tier) + a free DuckDNS name or your domain | `https://yourname.duckdns.org` | ~1 h | Full control. When home is offline it shows a "status unavailable" page. You maintain a second server. Ready-made files in `deploy/` |
 | ngrok free tier | Free | One static `*.ngrok-free.app` domain | 10 min | Shows a warning page before the site on first visit, which confuses visitors. Not recommended |
 
 All of these provide HTTPS; the app itself only speaks HTTP on the LAN. The page uses
@@ -192,6 +192,95 @@ sudo tailscale funnel --bg 8080                       # publish port 8080 public
 Cloudflare will cache `/static/echarts.min.js`, which is marked immutable for a year,
 at its edge, so the Pi barely serves the heavy file. Status and API responses are
 `no-store`, so they're always live.
+
+### Option C: Oracle Cloud VM (reverse SSH tunnel)
+
+**The app stays on the Pi:** the sensor is on the home network, which a cloud server
+can't reach, and running it there would also count home internet drops as outages.
+The VM is only the public front door:
+
+```
+visitors ─HTTPS─▶ Oracle VM: Caddy ─▶ 127.0.0.1:18080 ═ reverse SSH tunnel ═▶ Pi :8080
+```
+
+- **Tunnel:** the Pi opens the SSH connection *outward* and keeps it open (as the
+  systemd service `powersensor-tunnel`), so CGNAT doesn't matter.
+- **HTTPS:** Caddy on the VM gets and renews the certificate itself.
+- **Home offline:** if the Pi, or the power or internet at home, is down, visitors
+  see a short "Status unavailable" page, and API calls get a JSON `503`.
+- **Files:** `deploy/oracle/` (setup script, Caddyfile, offline page) and
+  `deploy/pi/powersensor-tunnel.service`.
+
+**1. Create the VM** (Oracle Cloud console → Compute → Instances → Create):
+- **Shape:** an *Always Free* shape. `VM.Standard.E2.1.Micro` (AMD) is plenty for
+  this. Ampere A1 works too, but is often "out of capacity" in busy regions.
+- **Image:** Ubuntu 22.04 or 24.04.
+- **SSH key:** add *your computer's* public key, so you can log in as `ubuntu`.
+- **Note** the instance's **public IP**.
+
+**2. Open ports 80 and 443** in Oracle's cloud firewall: Networking → Virtual cloud
+networks → your VCN → Security Lists → Default → **Add Ingress Rules**. Add source
+`0.0.0.0/0`, protocol TCP, destination port `80`, then the same again for `443`. (The
+VM's own firewall is opened by the setup script in step 5.)
+
+**3. Give it a name.** HTTPS certificates need a domain name.
+- **Free:** sign in at [duckdns.org](https://www.duckdns.org), add a subdomain (e.g.
+  `power-greenpark`), and set its IP to the VM's public IP.
+- **Your own domain:** add an `A` record pointing to the VM's IP.
+
+**4. On the Pi, create the tunnel key** (no passphrase, used only for this tunnel):
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/powersensor_tunnel -C powersensor-tunnel
+cat ~/.ssh/powersensor_tunnel.pub        # copy this line for step 5
+```
+
+**5. Set up the VM.** From your computer, in the repo folder:
+
+```bash
+scp -r deploy/oracle ubuntu@<VM_IP>:~/powersensor-oracle
+ssh ubuntu@<VM_IP>
+cd ~/powersensor-oracle
+sudo ./setup-vm.sh power-greenpark.duckdns.org "ssh-ed25519 AAAA...  powersensor-tunnel"   # the line from step 4
+```
+
+The script is safe to run again. It:
+- installs Caddy and opens 80/443 in the VM's firewall;
+- creates a `tunnel` user that can **only** forward `127.0.0.1:18080` (no shell, no
+  other ports);
+- makes sshd drop dead tunnel sessions within about 90 s;
+- installs the site and checks the config.
+
+**6. Start the tunnel on the Pi** (after `git pull` in the app folder):
+
+```bash
+cd /usr/local/smart-home/power-grid-dashboard
+sed "s/VM_HOST/<VM_IP>/" deploy/pi/powersensor-tunnel.service | sudo tee /etc/systemd/system/powersensor-tunnel.service
+sudo systemctl daemon-reload && sudo systemctl enable --now powersensor-tunnel
+journalctl -u powersensor-tunnel -n 20     # no errors = connected
+```
+
+If your Pi username isn't `utkarsh`, edit `User=` and the key path in the unit first.
+
+**7. Check**
+- **Through the tunnel:** on the VM, `curl -s 127.0.0.1:18080/healthz` prints `ok`.
+- **Publicly:** `https://power-greenpark.duckdns.org` shows the dashboard. Phones get
+  the app-style layout and the API works the same (`/api/status`, …).
+- **Offline page:** `sudo systemctl stop powersensor-tunnel` on the Pi should show
+  "Status unavailable" within a few seconds. Start it again afterwards.
+
+**Notes**
+- **Recovery after outages:** after a power or internet cut at home, the tunnel
+  reconnects by itself once the Pi is back. The Pi retries every 10 s, and the VM
+  frees the port from the dead session within about 90 s.
+- **Logging:** Caddy keeps no access log (no visitor IPs are recorded), the same as
+  the app.
+- **Idle reclamation:** Oracle's terms allow it to reclaim Always Free instances it
+  considers idle; this VM does very little work. Check the current policy. Upgrading
+  the account to Pay-As-You-Go (still free within the Always Free limits) is the
+  usual way to avoid this.
+- **Updates:** keep the VM patched: `sudo apt update && sudo apt upgrade` now and
+  then, or enable `unattended-upgrades`.
 
 ### Hardening once a tunnel is in place
 
@@ -418,6 +507,8 @@ followed by the first log date.
 | Page shows "Status unavailable · Monitor last checked … ago" | Poller stuck or app overloaded | `sudo systemctl restart powersensor`; check the logs |
 | Log says `could not record a check; will retry` | Another process held the database write lock for over 10 s (e.g. an open `sqlite3` session with a transaction) | Finish or close that session. The app keeps polling and retries the write on the next check |
 | Page shows "Can't reach the status server" | Pi, app or tunnel down, or the visitor is offline | `systemctl status powersensor`; check the tunnel (`tailscale funnel status` / Cloudflare dashboard) |
+| Public site (Oracle) shows "Status unavailable" while the Pi is fine | Tunnel down | On the Pi: `systemctl status powersensor-tunnel` and `journalctl -u powersensor-tunnel -n 30`. `remote port forwarding failed` means the VM still holds the old session; it clears within about 90 s and the tunnel retries by itself. `Permission denied (publickey)` means the key in step 5 doesn't match `~/.ssh/powersensor_tunnel.pub` |
+| Public site (Oracle) doesn't load at all, or there's no HTTPS certificate | DNS not pointing at the VM, or ports 80/443 closed | Check the DuckDNS/`A` record IP, the VCN security list rules (step 2), and on the VM `sudo journalctl -u caddy -n 50` |
 | Service won't start; log says `config.ini: unknown key …` or `… is invalid; expected …` | Mistake in `config.ini` | Fix the named line (§2), then `sudo systemctl start powersensor` |
 | Settings change has no effect | Config is only read at startup, or the service uses another file via `--config` | `sudo systemctl restart powersensor`; check the "loaded config from" log line for the path |
 | Permanent "Power is OUT" while power is on | Sensor IP changed or sensor reply text changed | `curl -i http://192.168.1.249/` from the Pi; it should print `Mains On`. Fix `url` / `match` under `[sensor]` in `config.ini` |

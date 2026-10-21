@@ -1,0 +1,46 @@
+# Caddy config for the Oracle Cloud VM: the public front door for the dashboard.
+#
+# The app itself runs on the Raspberry Pi at home (it has to: the sensor is on the home LAN).
+# The Pi keeps a reverse SSH tunnel open to this VM, which makes the Pi's port 8080 appear here
+# as 127.0.0.1:18080. Caddy serves it over HTTPS with a certificate it gets and renews itself.
+#
+# setup-vm.sh installs this file as /etc/caddy/Caddyfile with your domain filled in.
+# After editing by hand:  sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+{{DOMAIN}} {
+	reverse_proxy 127.0.0.1:18080 {
+		# The Pi is behind a home connection: fail fast instead of hanging when it's unreachable.
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 20s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Tunnel down (Pi off, home internet or power out): explain instead of showing a bare 502.
+	handle_errors {
+		@unreachable expression `{err.status_code} in [502, 503, 504]`
+		handle @unreachable {
+			@api path /api/* /healthz
+			handle @api {
+				header Content-Type application/json
+				header Cache-Control no-store
+				respond `{"error": "the power monitor at home can't be reached right now (its internet or power may be down)"}` 503
+			}
+			handle {
+				root * /var/www/powersensor
+				rewrite * /offline.html
+				header Cache-Control no-store
+				file_server
+			}
+		}
+	}
+
+	# No access log on purpose: like the app, this doesn't record who visits.
+}

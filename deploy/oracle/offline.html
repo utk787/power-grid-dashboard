@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Power status unavailable</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--warn:#b45309;--warn-bg:#fef3c7}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f14;--card:#141a21;--text:#e5e7eb;--muted:#9ca3af;--line:#232b35;--warn:#fbbf24;--warn-bg:#3a2a0b}}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:24px 16px}
+.card{background:var(--card);border:2px solid var(--warn);border-radius:14px;padding:22px;display:flex;gap:16px;align-items:flex-start}
+.dot{flex:none;width:48px;height:48px;border-radius:50%;background:var(--warn-bg);color:var(--warn);display:grid;place-items:center;font-size:24px;font-weight:700}
+h1{margin:0 0 6px;font-size:1.5rem;color:var(--warn)}
+p{margin:6px 0;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <div class="dot" aria-hidden="true">!</div>
+    <div>
+      <h1>Status unavailable</h1>
+      <p>The power monitor at home can't be reached right now.</p>
+      <p>This usually means the <b>internet or the power there is down</b>, so the live status and history can't be loaded.</p>
+      <p>This page checks again every 30 seconds.</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>

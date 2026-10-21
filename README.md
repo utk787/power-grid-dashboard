@@ -38,7 +38,8 @@ All settings (sensor address, thresholds, port, site name, database path) are in
 at startup; use `--config PATH` to point at another file.
 
 On the Pi, install it as a systemd service and optionally publish it on the internet
-(this works without a public IP). See the admin guide.
+(this works without a public IP: Tailscale Funnel, Cloudflare Tunnel, or an Oracle Cloud VM
+with ready-made files in `deploy/`). See the admin guide.
 
 ## Tests
 
@@ -85,5 +86,6 @@ tests/                 backend, frontend logic and browser smoke tests
 tools/backfill_logs.py imports old power-status*.log history (see the admin guide)
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
+deploy/                public hosting on an Oracle Cloud VM: setup script, Caddyfile, Pi tunnel unit
 docs/                  architecture, administration, testing and API guides; OpenAPI spec
 ```
