@@ -44,6 +44,7 @@ flowchart LR
 | `static/core.js` | Pure data logic (bucketing, stats, chart data) with no DOM or clock access. Inlined into the page by the server and `require()`d by the Node tests |
 | `tests/` | Backend, frontend logic and browser smoke tests. See [TESTING.md](TESTING.md) |
 | `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, toolbox (for drag-to-zoom), visual-map, calendar and mark-area components; canvas renderer) |
+| `deploy/` | Public hosting on an Oracle Cloud VM with self-hosted Headscale (see *Public hosting* below) |
 | `tools/backfill_logs.py` | Imports the old logger's `power-status*.log` history into `power.db` (see ADMINISTRATION.md §9) |
 | `tools/echarts/` | `package.json` and `entry.js` that build the bundle. Only needed to change chart types; the Pi never needs Node |
 | `powersensor.service` | systemd unit (runs `app.py --config …/config.ini`) |
@@ -360,6 +361,63 @@ mobile page:
 - **iPhone edges:** `viewport-fit=cover` and `env(safe-area-inset-bottom)` keep the
   tab bar clear of the home indicator.
 
+## Public hosting (Oracle Cloud + Headscale)
+
+The Pi has no public IP (the ISP uses CGNAT), and the app can't move to the cloud
+because the sensor is on the home LAN. So a small Oracle Cloud *Always Free* VM acts
+as the public front door, joined to the Pi by a private WireGuard network.
+Step-by-step setup is in ADMINISTRATION.md §4, Option C.
+
+```
+             ┌──────────────────────── Oracle VM (public IP) ─────────────────────────┐
+ visitors ──▶│ Caddy :443 ── power.<domain> ──▶ 100.64.x.x:8080 (Pi, over WireGuard)  │
+             │            └─ hs.<domain>    ──▶ Headscale 127.0.0.1:8081              │
+             │ tailscaled  (node "power-proxy", user proxy@)                          │
+             └────────────────────────────────────────────────────────────────────────┘
+                       ▲ control: HTTPS to hs.<domain>        ▲ data: WireGuard, UDP 41641
+             ┌─────────┴─────────────────────────────────────┴──────┐
+             │ Pi: tailscaled (node "power-pi", user home@)  app :8080 ── sensor (LAN)
+             └──────────────────────────────────────────────────────┘
+```
+
+| Piece | Role |
+|---|---|
+| **Caddy** | Terminates HTTPS for both names (certificates obtained and renewed automatically). It proxies the dashboard to the Pi's private address with a 5 s dial timeout. If the Pi is unreachable it serves `offline.html` (and a JSON `503` for `/api/*`) instead of a 502. It keeps no access log |
+| **Headscale** | Self-hosted, open-source Tailscale control server. It hands out keys, addresses and the access policy. Listens on localhost only; Caddy fronts it. State is in `/var/lib/headscale` (SQLite plus a noise key) |
+| **tailscaled** (VM and Pi) | The official Tailscale client, logged in to Headscale. It carries the actual traffic: peer-to-peer WireGuard, falling back to Tailscale's public DERP relays if UDP is blocked. Joined with `--accept-dns=false`, so neither machine's DNS changes |
+| **Policy** | `policy.hujson`: `proxy@ → home@:8080` and nothing else (default deny). The VM can't reach SSH or any other port on the Pi |
+
+**Why Headscale + WireGuard rather than a reverse SSH tunnel:**
+- **Survives network changes:** WireGuard has no session to re-establish, so internet
+  blips and home IP changes don't cause a reconnect cycle. The SSH version took up to
+  about 90 s to recover from each.
+- **Control-plane outages are harmless:** if Headscale is down, the existing link keeps
+  working, because keys stay valid. It's only needed to add or re-authorise devices.
+- **Self-hosted, and room to grow:** there's no third-party control plane, and it
+  scales to more devices (an admin laptop, more sensors) by adding users and policy
+  rules.
+
+**Setup automation:**
+- **`setup-vm.sh`** is idempotent:
+  - It installs the latest **stable** Headscale release, resolved from GitHub's
+    `releases/latest`, which excludes betas, and checks it against the release's
+    `checksums.txt`.
+  - It validates the config (`headscale configtest`) and the policy
+    (`headscale policy check`).
+  - It joins the VM with a 10-minute single-use key and prints a single-use key for
+    the Pi.
+  - It waits for the Pi, points Caddy at the Pi's address, then verifies end to end:
+    the dashboard is reachable over WireGuard, port 22 on the Pi is refused by the
+    policy, and the public HTTPS URL answers.
+- **`join-tailnet.sh`** does the Pi side.
+
+**Failure behaviour:**
+- **Home power or internet down:** visitors get the offline page within the 5 s dial
+  timeout. The link comes back by itself when home is online again.
+- **VM down:** the public site is down, but the Pi and its LAN dashboard are
+  unaffected.
+- **Headscale down:** no effect on traffic.
+
 ## Failure modes
 
 | Situation | Behaviour |
@@ -371,6 +429,7 @@ mobile page:
 | Database locked by another process | The write waits up to 10 s; if it still fails, the check is retried on the next poll and the polling thread keeps running |
 | Short blip (< threshold) | Recorded in `readings` only, not as an outage |
 | Pi clock wrong at boot (no RTC; time is restored from the last saved value until NTP syncs) | Timestamps written before sync can be off. See *Clock* in `ADMINISTRATION.md` |
+| Oracle VM can't reach the Pi (home offline) | Visitors get the "Status unavailable" page; `/api/*` returns JSON `503`. The WireGuard link recovers by itself |
 | Visitor's browser can't load ECharts | Status, stats and list still work; chart areas show "Loading chart…" |
 
 ## Design decisions

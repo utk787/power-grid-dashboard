@@ -1,14 +1,17 @@
-# Caddy config for the Oracle Cloud VM: the public front door for the dashboard.
+# Caddy config for the Oracle Cloud VM: the public front door for the dashboard, and HTTPS
+# for the Headscale control server.
 #
-# The app itself runs on the Raspberry Pi at home (it has to: the sensor is on the home LAN).
-# The Pi keeps a reverse SSH tunnel open to this VM, which makes the Pi's port 8080 appear here
-# as 127.0.0.1:18080. Caddy serves it over HTTPS with a certificate it gets and renews itself.
+# The app runs on the Raspberry Pi at home (it has to: the sensor is on the home LAN). The Pi
+# and this VM are on a private WireGuard network coordinated by Headscale, and Caddy reaches
+# the Pi at its private address. Caddy gets and renews both HTTPS certificates itself.
 #
-# setup-vm.sh installs this file as /etc/caddy/Caddyfile with your domain filled in.
+# setup-vm.sh installs this as /etc/caddy/Caddyfile with {{SITE_DOMAIN}}, {{HS_DOMAIN}} and
+# {{PI_UPSTREAM}} (the Pi's private address:8080) filled in.
 # After editing by hand:  sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 
-{{DOMAIN}} {
-	reverse_proxy 127.0.0.1:18080 {
+# The dashboard, for everyone.
+{{SITE_DOMAIN}} {
+	reverse_proxy {{PI_UPSTREAM}} {
 		# The Pi is behind a home connection: fail fast instead of hanging when it's unreachable.
 		transport http {
 			dial_timeout 5s
@@ -23,7 +26,7 @@
 		-Server
 	}
 
-	# Tunnel down (Pi off, home internet or power out): explain instead of showing a bare 502.
+	# Pi unreachable (Pi off, home internet or power out): explain instead of a bare 502.
 	handle_errors {
 		@unreachable expression `{err.status_code} in [502, 503, 504]`
 		handle @unreachable {
@@ -43,4 +46,10 @@
 	}
 
 	# No access log on purpose: like the app, this doesn't record who visits.
+}
+
+# Headscale, the control server for the private network (used by the Pi and this VM).
+{{HS_DOMAIN}} {
+	reverse_proxy 127.0.0.1:8081
+	header -Server
 }

@@ -1,0 +1,19 @@
+// Who may reach whom on the private network (Tailscale ACL syntax). Anything not allowed
+// here is denied. Installed by setup-vm.sh as /etc/headscale/policy.hujson.
+// After editing:  sudo headscale policy check --file /etc/headscale/policy.hujson
+//                 sudo systemctl restart headscale
+//
+// Users (each device joins as one of them, using a one-time pre-auth key):
+//   proxy@  the Oracle VM running Caddy
+//   home@   the Raspberry Pi running the dashboard
+//
+// setup-vm.sh checks this for real once both have joined: the VM must reach the Pi on port
+// 8080 and must be refused on port 22. (A "tests" block isn't used because Headscale rejects
+// it while a user has no devices yet, which is the case during setup.)
+{
+  "acls": [
+    // The VM may reach the dashboard on the Pi, and only on port 8080: even a compromised VM
+    // can't SSH into the Pi or reach anything else on it.
+    {"action": "accept", "src": ["proxy@"], "dst": ["home@:8080"]},
+  ],
+}

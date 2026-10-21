@@ -73,7 +73,7 @@ commented-out line uses the default below.
 | `[monitor]` | `heartbeat_interval` | `60` | Seconds between "monitor alive" timestamps |
 | | `gap_threshold` | `180` | If the app was down longer than this many seconds, the gap is logged as a likely outage |
 | `[storage]` | `db_path` | `power.db` | SQLite file. A relative path is relative to the config file's folder; `~` is expanded |
-| `[server]` | `host` | `0.0.0.0` | Listen address. `127.0.0.1` allows only a tunnel on the same Pi (see §4) |
+| `[server]` | `host` | `0.0.0.0` | Listen address. `127.0.0.1` allows only a tunnel running on the Pi itself (Funnel or Cloudflare, see §4). Keep `0.0.0.0` for the Oracle + Headscale setup |
 | | `port` | `8080` | Listen port (1–65535) |
 | | `site_name` | `Power Status` in code; `Power Grid Status` in the shipped file | Page title and header |
 
@@ -157,7 +157,7 @@ visitors reach the Pi through it. No router changes are needed.
 | **Tailscale Funnel** | Free | `https://raspberrypi.<your-tailnet>.ts.net` | ~10 min | No domain needed. HTTPS included. Best zero-cost choice |
 | **Cloudflare Tunnel + own domain** | Free tunnel + domain (often ~$1–3 first year for cheap TLDs, ~$10/yr for `.com` at renewal) | `https://power.yourdomain.com` | ~20 min | Nicest URL, CDN caching, DDoS protection, analytics. **Recommended if you'll pay for a domain** |
 | Cloudflare quick tunnel | Free | Random `https://xyz.trycloudflare.com` that **changes on every restart** | 1 min | Demos only, no uptime guarantee |
-| **Oracle Cloud VM + reverse SSH tunnel** (Option C) | Free (Always Free tier) + a free DuckDNS name or your domain | `https://yourname.duckdns.org` | ~1 h | Full control. When home is offline it shows a "status unavailable" page. You maintain a second server. Ready-made files in `deploy/` |
+| **Oracle Cloud VM + Headscale** (Option C) | Free (Always Free tier) + two free DuckDNS names or your domain | `https://yourname.duckdns.org` | ~1 h | Self-hosted end to end: Caddy and your own Headscale (open-source Tailscale control server) on the VM, WireGuard to the Pi. Survives home IP changes without reconnecting. Shows a "status unavailable" page when home is offline. Ready-made scripts in `deploy/` |
 | ngrok free tier | Free | One static `*.ngrok-free.app` domain | 10 min | Shows a warning page before the site on first visit, which confuses visitors. Not recommended |
 
 All of these provide HTTPS; the app itself only speaks HTTP on the LAN. The page uses
@@ -193,102 +193,159 @@ Cloudflare will cache `/static/echarts.min.js`, which is marked immutable for a 
 at its edge, so the Pi barely serves the heavy file. Status and API responses are
 `no-store`, so they're always live.
 
-### Option C: Oracle Cloud VM (reverse SSH tunnel)
+### Option C: Oracle Cloud VM + Headscale (self-hosted WireGuard network)
 
 **The app stays on the Pi:** the sensor is on the home network, which a cloud server
 can't reach, and running it there would also count home internet drops as outages.
-The VM is only the public front door:
+The Oracle VM is the public front door. The VM and the Pi are joined by a private
+**WireGuard** network, coordinated by **Headscale** (the open-source, self-hosted
+Tailscale control server) running on the same VM:
 
 ```
-visitors ─HTTPS─▶ Oracle VM: Caddy ─▶ 127.0.0.1:18080 ═ reverse SSH tunnel ═▶ Pi :8080
+                    ┌───────────────────── Oracle VM (public IP) ──────────────────────┐
+visitors ─HTTPS──▶  │ power.<domain> ─▶ Caddy ─▶ Pi's private IP 100.64.x.x:8080 ───────┼──┐
+                    │ hs.<domain>    ─▶ Caddy ─▶ Headscale (127.0.0.1:8081)             │  │ WireGuard
+                    │ tailscaled (the VM's own client, user "proxy")                    │  │ (UDP 41641)
+                    └───────────────────────────────────────────────────────────────────┘  │
+                                         Pi: tailscaled (user "home") ─▶ app :8080 ◀──────┘
 ```
 
-- **Tunnel:** the Pi opens the SSH connection *outward* and keeps it open (as the
-  systemd service `powersensor-tunnel`), so CGNAT doesn't matter.
-- **HTTPS:** Caddy on the VM gets and renews the certificate itself.
-- **Home offline:** if the Pi, or the power or internet at home, is down, visitors
-  see a short "Status unavailable" page, and API calls get a JSON `503`.
-- **Files:** `deploy/oracle/` (setup script, Caddyfile, offline page) and
-  `deploy/pi/powersensor-tunnel.service`.
+- **Every part is self-hosted.** The Pi and the VM run the official Tailscale client,
+  but it's logged in to **your Headscale**, not to Tailscale's servers.
+- **Durable link:** WireGuard has no connection to rebuild, so the link survives
+  internet blips and changes of your home IP without a reconnect cycle. If Headscale
+  restarts, the existing Pi ↔ VM link keeps working.
+- **Direct path:** the Pi, behind CGNAT, connects out to the VM directly over UDP
+  41641. If that's ever blocked, traffic falls back to Tailscale's public DERP relay
+  servers (slower, still encrypted end to end).
+- **Least privilege:** an access policy (`deploy/oracle/headscale/policy.hujson`) lets
+  the VM reach **only port 8080** on the Pi. Even a compromised VM can't SSH into the
+  Pi or reach anything else on it.
+- **HTTPS:** Caddy serves both names over HTTPS and renews the certificates itself.
+- **Home offline:** when the Pi, or the power or internet at home, is down, visitors
+  see "Status unavailable" and API calls get a JSON `503`.
+- **Version:** `setup-vm.sh` installs the **latest stable** Headscale release (never a
+  beta), verified against its published checksums. Running it again upgrades
+  Headscale, backing up the database first.
+
+**Files:**
+
+| File | Role |
+|---|---|
+| `deploy/oracle/setup-vm.sh` | Run once on the VM (safe to re-run). Installs and configures everything, and checks it end to end |
+| `deploy/oracle/Caddyfile` | The two sites: the dashboard (with the offline page) and Headscale |
+| `deploy/oracle/headscale/config.yaml` | Headscale settings (listens on localhost only; Caddy does TLS) |
+| `deploy/oracle/headscale/policy.hujson` | Who may reach whom: VM → Pi port 8080 only |
+| `deploy/oracle/offline.html` | The "Status unavailable" page |
+| `deploy/pi/join-tailnet.sh` | Run once on the Pi with the key the VM script prints |
 
 **1. Create the VM** (Oracle Cloud console → Compute → Instances → Create):
-- **Shape:** an *Always Free* shape. `VM.Standard.E2.1.Micro` (AMD) is plenty for
-  this. Ampere A1 works too, but is often "out of capacity" in busy regions.
+- **Shape:** an *Always Free* shape. `VM.Standard.E2.1.Micro` (AMD, 1 GB) is enough:
+  Caddy, Headscale and the Tailscale client together typically use only around
+  100–150 MB. Ampere A1 (arm64) works too, but is often "out of capacity".
 - **Image:** Ubuntu 22.04 or 24.04.
 - **SSH key:** add *your computer's* public key, so you can log in as `ubuntu`.
 - **Note** the instance's **public IP**.
 
-**2. Open ports 80 and 443** in Oracle's cloud firewall: Networking → Virtual cloud
-networks → your VCN → Security Lists → Default → **Add Ingress Rules**. Add source
-`0.0.0.0/0`, protocol TCP, destination port `80`, then the same again for `443`. (The
-VM's own firewall is opened by the setup script in step 5.)
+**2. Open ports** in Oracle's cloud firewall: Networking → Virtual cloud networks →
+your VCN → Security Lists → Default → **Add Ingress Rules**, each with source
+`0.0.0.0/0`:
+- TCP `80` and TCP `443`, for HTTPS and certificate issuance;
+- UDP `41641`, for the direct WireGuard connection from the Pi.
 
-**3. Give it a name.** HTTPS certificates need a domain name.
-- **Free:** sign in at [duckdns.org](https://www.duckdns.org), add a subdomain (e.g.
-  `power-greenpark`), and set its IP to the VM's public IP.
-- **Your own domain:** add an `A` record pointing to the VM's IP.
+(The VM's own firewall is opened by the setup script.)
 
-**4. On the Pi, create the tunnel key** (no passphrase, used only for this tunnel):
+**3. Two names pointing at the VM:** one for the dashboard and one for Headscale.
+- **Free:** at [duckdns.org](https://www.duckdns.org), add two subdomains (e.g.
+  `power-greenpark` and `hs-greenpark`) and set both to the VM's public IP.
+- **Your own domain:** add two `A` records.
 
-```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/powersensor_tunnel -C powersensor-tunnel
-cat ~/.ssh/powersensor_tunnel.pub        # copy this line for step 5
-```
-
-**5. Set up the VM.** From your computer, in the repo folder:
+**4. Set up the VM.** From your computer, in the repo folder:
 
 ```bash
 scp -r deploy/oracle ubuntu@<VM_IP>:~/powersensor-oracle
 ssh ubuntu@<VM_IP>
 cd ~/powersensor-oracle
-sudo ./setup-vm.sh power-greenpark.duckdns.org "ssh-ed25519 AAAA...  powersensor-tunnel"   # the line from step 4
+sudo ./setup-vm.sh power-greenpark.duckdns.org hs-greenpark.duckdns.org
 ```
 
-The script is safe to run again. It:
-- installs Caddy and opens 80/443 in the VM's firewall;
-- creates a `tunnel` user for the Pi's key. sshd lets it do **only** one thing:
-  publish the Pi's dashboard on `127.0.0.1:18080` (reverse forwarding). Outbound
-  forwarding is refused, so a stolen key can't use the VM to reach other hosts, and
-  there's no shell or terminal. The script checks sshd's effective settings, and stops
-  if the restrictions didn't apply or leaked to other users;
-- makes sshd drop dead tunnel sessions within about 90 s;
-- installs the site and checks the config.
+The script runs these steps:
+1. Installs Caddy and opens TCP 80/443 and UDP 41641 in the VM's firewall.
+2. Installs Headscale, checks its config and policy, and creates the users `proxy`
+   and `home`.
+3. Waits for the HTTPS certificate for the Headscale name.
+4. Joins the VM to the network as `power-proxy`.
+5. Prints a **one-time key** and the exact command to run on the Pi, then **waits**
+   (up to 15 min) for the Pi to join.
 
-**6. Start the tunnel on the Pi** (after `git pull` in the app folder):
+**5. Join the Pi.** In another terminal, on the Pi, in the app folder after
+`git pull`, run the command the VM printed:
 
 ```bash
-cd /usr/local/smart-home/power-grid-dashboard
-sed "s/VM_HOST/<VM_IP>/" deploy/pi/powersensor-tunnel.service | sudo tee /etc/systemd/system/powersensor-tunnel.service
-sudo systemctl daemon-reload && sudo systemctl enable --now powersensor-tunnel
-journalctl -u powersensor-tunnel -n 20     # no errors = connected
+sudo deploy/pi/join-tailnet.sh https://hs-greenpark.duckdns.org hskey-auth-…
 ```
 
-If your Pi username isn't `utkarsh`, edit `User=` and the key path in the unit first.
+This installs the Tailscale client (official installer, stable channel), joins as
+`power-pi`, and leaves the Pi's DNS settings alone. It also checks that the dashboard
+answers on the Pi's private address. The app must listen on `0.0.0.0`, the default
+`host` in `config.ini`.
 
-**7. Check**
-- **Through the tunnel:** on the VM, `curl -s 127.0.0.1:18080/healthz` prints `ok`.
-- **Publicly:** `https://power-greenpark.duckdns.org` shows the dashboard. Phones get
-  the app-style layout and the API works the same (`/api/status`, …).
-- **Offline page:** `sudo systemctl stop powersensor-tunnel` on the Pi should show
-  "Status unavailable" within a few seconds. Start it again afterwards.
+**6. The VM script finishes by itself** once the Pi appears. It points Caddy at the
+Pi, then checks three things:
+- the VM reaches the dashboard on the Pi;
+- the Pi's SSH port is **not** reachable from the VM (the policy works);
+- `https://power-greenpark.duckdns.org` is live.
+
+If you pressed Ctrl+C or the key expired, just run `setup-vm.sh` again: it picks up
+where it left off and prints a fresh key if needed.
+
+**7. Check.** Open `https://power-greenpark.duckdns.org`; phones get the app-style
+layout, and the API works the same. To see the offline page, run
+`sudo tailscale down` on the Pi; `sudo tailscale up` brings it back.
 
 **Notes**
-- **Recovery after outages:** after a power or internet cut at home, the tunnel
-  reconnects by itself once the Pi is back. The Pi retries every 10 s, and the VM
-  frees the port from the dead session within about 90 s.
+
+- **Day to day:**
+  - `sudo headscale nodes list` (on the VM) shows both machines and whether they're
+    online.
+  - `tailscale status` (on either) shows the link. "direct" means peer-to-peer;
+    "relay" means it's going through DERP.
+- **Upgrades:** run `sudo ./setup-vm.sh <same two names>` again. It installs any newer
+  **stable** Headscale, after backing up `/var/lib/headscale/db.sqlite` to
+  `db.sqlite.before-<version>`. Read the release notes for breaking changes first:
+  https://github.com/juanfont/headscale/releases. To pin a version, add
+  `HEADSCALE_VERSION=v0.29.5` before the command. The Tailscale clients update with
+  `apt upgrade`; Headscale states the minimum client version it supports
+  (currently v1.80).
+- **Backups:** keep a copy of `/var/lib/headscale/` (the database and
+  `noise_private.key`). Without it you'd have to re-join both machines.
+- **Re-joining the Pi** (e.g. after reinstalling it): on the VM,
+  `sudo headscale nodes list`, then
+  `sudo headscale nodes delete --identifier <id>` for the old entry. Then run
+  `setup-vm.sh` again for a new key.
+- **Remote access (optional):** to SSH into the Pi from your laptop over this network,
+  join the laptop as a new user and add a rule for it in `policy.hujson`, for example
+  `{"action": "accept", "src": ["admin@"], "dst": ["home@:22"]}`. Re-run the setup
+  script, or run `sudo systemctl restart headscale`.
+- **Coming from the earlier SSH-tunnel version of this setup?** `setup-vm.sh` removes
+  the old `tunnel` user and its sshd rules on the VM, and `join-tailnet.sh` removes the
+  `powersensor-tunnel` service on the Pi.
 - **Logging:** Caddy keeps no access log (no visitor IPs are recorded), the same as
   the app.
 - **Idle reclamation:** Oracle's terms allow it to reclaim Always Free instances it
-  considers idle; this VM does very little work. Check the current policy. Upgrading
-  the account to Pay-As-You-Go (still free within the Always Free limits) is the
-  usual way to avoid this.
+  considers idle. Check the current policy. Upgrading the account to Pay-As-You-Go
+  (still free within the Always Free limits) is the usual way to avoid this.
 - **Updates:** keep the VM patched: `sudo apt update && sudo apt upgrade` now and
   then, or enable `unattended-upgrades`.
 
 ### Hardening once a tunnel is in place
 
-- If nobody needs the LAN URL, set `host = 127.0.0.1` under `[server]` in
-  `config.ini` (see §2). The app is then only reachable through the tunnel.
+- **Tailscale Funnel or Cloudflare Tunnel (A/B):** if nobody needs the LAN URL, set
+  `host = 127.0.0.1` under `[server]` in `config.ini` (see §2). The app is then only
+  reachable through the tunnel.
+- **Oracle + Headscale (C):** keep `host = 0.0.0.0`, because the VM connects to the
+  Pi's private network address. The Headscale policy already limits the VM to port
+  8080.
 - The app is read-only with no login and exposes no write endpoints, so nothing
   further is required.
 - With Cloudflare you can add a rate-limiting rule as cheap insurance against
@@ -510,8 +567,10 @@ followed by the first log date.
 | Page shows "Status unavailable · Monitor last checked … ago" | Poller stuck or app overloaded | `sudo systemctl restart powersensor`; check the logs |
 | Log says `could not record a check; will retry` | Another process held the database write lock for over 10 s (e.g. an open `sqlite3` session with a transaction) | Finish or close that session. The app keeps polling and retries the write on the next check |
 | Page shows "Can't reach the status server" | Pi, app or tunnel down, or the visitor is offline | `systemctl status powersensor`; check the tunnel (`tailscale funnel status` / Cloudflare dashboard) |
-| Public site (Oracle) shows "Status unavailable" while the Pi is fine | Tunnel down | On the Pi: `systemctl status powersensor-tunnel` and `journalctl -u powersensor-tunnel -n 30`. `remote port forwarding failed` means the VM still holds the old session; it clears within about 90 s and the tunnel retries by itself. `Permission denied (publickey)` means the key in step 5 doesn't match `~/.ssh/powersensor_tunnel.pub` |
-| Public site (Oracle) doesn't load at all, or there's no HTTPS certificate | DNS not pointing at the VM, or ports 80/443 closed | Check the DuckDNS/`A` record IP, the VCN security list rules (step 2), and on the VM `sudo journalctl -u caddy -n 50` |
+| Public site (Oracle) shows "Status unavailable" while the Pi is fine | Pi not connected to the private network, or the app isn't listening on it | On the Pi: `tailscale status` should list `power-proxy`; if it says "Logged out", run `setup-vm.sh` on the VM for a new key and then `join-tailnet.sh`. On the VM: `curl -s http://<Pi's 100.64.x.x IP>:8080/healthz` should print `ok`, and if it hangs, check `host = 0.0.0.0` in the Pi's `config.ini` |
+| Public site (Oracle) doesn't load at all, or there's no HTTPS certificate | DNS not pointing at the VM, or ports 80/443 closed | Check both DuckDNS/`A` records, the VCN security list rules (step 2), and on the VM `sudo journalctl -u caddy -n 50` |
+| `setup-vm.sh` stops at "headscale configtest failed" after an upgrade | The new Headscale release changed its config format | Read that release's notes. Compare `deploy/oracle/headscale/config.yaml` with the release's `config-example.yaml` and update it. To stay on the previous version meanwhile: `HEADSCALE_VERSION=<old version> sudo ./setup-vm.sh …` |
+| `tailscale status` on the Pi shows the VM as "relay" instead of "direct" | UDP 41641 isn't reaching the VM | Open UDP 41641 in the VCN security list (step 2). It still works through the relay, just with more delay |
 | Service won't start; log says `config.ini: unknown key …` or `… is invalid; expected …` | Mistake in `config.ini` | Fix the named line (§2), then `sudo systemctl start powersensor` |
 | Settings change has no effect | Config is only read at startup, or the service uses another file via `--config` | `sudo systemctl restart powersensor`; check the "loaded config from" log line for the path |
 | Permanent "Power is OUT" while power is on | Sensor IP changed or sensor reply text changed | `curl -i http://192.168.1.249/` from the Pi; it should print `Mains On`. Fix `url` / `match` under `[sensor]` in `config.ini` |

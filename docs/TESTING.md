@@ -10,7 +10,7 @@ throwaway databases and servers on `127.0.0.1`.
 | **Backend** | 62 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API (including the 7-day range query) | `python3 -m unittest` | `tests/test_app.py` |
 | **Frontend logic** | 28 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
 | **Backfill tool** | 14 | `tools/backfill_logs.py`: log parsing, merging, outage rules, safe and repeatable import, short write locks, SQL file = direct import | `python3 -m unittest` | `tests/test_backfill.py` |
-| **API docs** | 5 | `docs/openapi.yaml` and `docs/API.md` list exactly the routes the server answers; the static file list and 7-day limit match the code | `python3 -m unittest` | `tests/test_docs.py` |
+| **Docs & deploy** | 11 | `docs/openapi.yaml` and `docs/API.md` list exactly the routes the server answers; the Oracle + Headscale scripts and templates agree with each other | `python3 -m unittest` | `tests/test_docs.py` |
 | **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
 ## Requirements
@@ -40,7 +40,7 @@ python3 -m unittest tests.test_app -v        # backend only (fast, ~2 s)
 python3 -m unittest tests.test_app.ConfigTests -v   # just the config-file tests
 node --test tests/frontend/                  # frontend logic only (<1 s)
 python3 -m unittest tests.test_backfill -v   # backfill tool (<1 s)
-python3 -m unittest tests.test_docs -v       # API docs match the server's routes
+python3 -m unittest tests.test_docs -v       # API docs match the routes; deploy scripts match their templates
 python3 -m unittest tests.test_smoke -v      # browser smoke tests (~10 s)
 python3 -m unittest discover -s tests -v     # backend + smoke together
 ```
@@ -204,7 +204,7 @@ Builds small `power-status*.log` files covering each case seen in the real logs:
   exactly the same database as the direct import. This test is skipped if `sqlite3`
   isn't installed.
 
-### API docs (`tests/test_docs.py`)
+### Docs & deploy (`tests/test_docs.py`)
 
 Reads `app.py`, `docs/openapi.yaml` and `docs/API.md` as text, with no YAML parser
 needed:
@@ -215,6 +215,30 @@ needed:
 - **Spec basics:** the spec is OpenAPI 3.1, with an `operationId` for every path.
 - **Matches the code:** the static files listed are the ones in `static/`, and the
   7-day limit in the spec matches `MAX_QUERY_RANGE`.
+
+**Deploy files (`deploy/`).** These only run on a real Oracle VM and Pi, so the tests
+check that the pieces agree:
+- every `{{PLACEHOLDER}}` in the Caddyfile and the Headscale config is filled in by
+  `setup-vm.sh`;
+- the files the script needs exist, and the Pi command it prints points at an
+  executable `deploy/pi/join-tailnet.sh`;
+- the Pi's node name is the same in both scripts;
+- the policy allows exactly `proxy@ → home@:8080`;
+- Caddy proxies to the address Headscale listens on.
+
+When the Headscale setup was written, it was also checked by hand against the real
+tools:
+- `shellcheck` on both scripts;
+- `caddy validate` (v2.8.4) on the Caddyfile, before and after the Pi joins;
+- `headscale configtest` and `headscale policy check` (v0.29.5) on the config and
+  policy;
+- the script's user, key and node-parsing commands, run against a running Headscale
+  server;
+- the latest-stable lookup and the checksum verification, including rejection of a
+  tampered file.
+
+The VM-to-Pi join itself needs real machines; `setup-vm.sh` checks it at the end of
+every run.
 
 The full structure of the spec was also validated with `openapi-spec-validator`, and
 every example and live response was checked against its schemas with `jsonschema`.

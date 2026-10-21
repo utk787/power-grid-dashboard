@@ -39,7 +39,7 @@ at startup; use `--config PATH` to point at another file.
 
 On the Pi, install it as a systemd service and optionally publish it on the internet
 (this works without a public IP: Tailscale Funnel, Cloudflare Tunnel, or an Oracle Cloud VM
-with ready-made files in `deploy/`). See the admin guide.
+with self-hosted Headscale, set up by the scripts in `deploy/`). See the admin guide.
 
 ## Tests
 
@@ -53,7 +53,7 @@ There are five suites, and none need packages installed:
 
 - **Backend:** 62 Python `unittest` tests, covering config loading
 - **Backfill tool:** 14 Python tests for importing the old logger's files
-- **API docs:** 5 Python tests that keep `docs/openapi.yaml` and `docs/API.md` in step with the server's routes
+- **Docs & deploy:** 11 Python tests that keep `docs/openapi.yaml` and `docs/API.md` in step with the server's routes, and the Oracle + Headscale scripts in step with their templates
 - **Frontend logic:** 28 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
@@ -86,6 +86,6 @@ tests/                 backend, frontend logic and browser smoke tests
 tools/backfill_logs.py imports old power-status*.log history (see the admin guide)
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
-deploy/                public hosting on an Oracle Cloud VM: setup script, Caddyfile, Pi tunnel unit
+deploy/                public hosting on an Oracle Cloud VM: Caddy + Headscale setup script, Pi join script
 docs/                  architecture, administration, testing and API guides; OpenAPI spec
 ```

@@ -53,5 +53,50 @@ class ApiDocsTest(unittest.TestCase):
         self.assertIn("max_range_s: %d" % seconds, SPEC)
 
 
+class DeployFilesTest(unittest.TestCase):
+    """The Oracle + Headscale scripts and their templates must agree (they only run on real servers)."""
+
+    DEPLOY = ROOT / "deploy"
+    SETUP = (DEPLOY / "oracle" / "setup-vm.sh").read_text(encoding="utf-8")
+    JOIN = (DEPLOY / "pi" / "join-tailnet.sh").read_text(encoding="utf-8")
+
+    def test_every_template_placeholder_is_filled_by_the_script(self):
+        for template in ("Caddyfile", "headscale/config.yaml"):
+            text = (self.DEPLOY / "oracle" / template).read_text(encoding="utf-8")
+            for placeholder in set(re.findall(r"\{\{[A-Z_]+\}\}", text)):
+                with self.subTest(template=template, placeholder=placeholder):
+                    self.assertIn("s/%s/" % placeholder, self.SETUP)
+
+    def test_files_the_script_needs_exist(self):
+        for name in re.search(r"for f in ([^;]+); do", self.SETUP).group(1).split():
+            with self.subTest(file=name):
+                self.assertTrue((self.DEPLOY / "oracle" / name).is_file())
+
+    def test_pi_command_printed_by_the_vm_script_exists(self):
+        path = re.search(r"sudo (deploy/pi/[\w.-]+) https://", self.SETUP).group(1)
+        self.assertTrue((ROOT / path).is_file())
+        self.assertTrue((ROOT / path).stat().st_mode & 0o111, "join script must be executable")
+
+    def test_pi_node_name_matches_between_scripts(self):
+        self.assertEqual(re.search(r"^PI_NAME=(\S+)", self.SETUP, re.M).group(1),
+                         re.search(r"^NAME=(\S+)", self.JOIN, re.M).group(1))
+
+    def test_policy_allows_only_vm_to_pi_dashboard(self):
+        policy = (self.DEPLOY / "oracle" / "headscale" / "policy.hujson").read_text(encoding="utf-8")
+        rules = re.findall(r'\{"action": "accept".*\}', policy)
+        self.assertEqual(rules, ['{"action": "accept", "src": ["proxy@"], "dst": ["home@:8080"]}'])
+        for user in ("proxy", "home"):
+            self.assertIn("for u in proxy home", self.SETUP)
+            self.assertIn("user_id %s" % user, self.SETUP)
+        self.assertIn(":8080", re.search(r'write_caddyfile "\$PI_IP:(\d+)"', self.SETUP).group(0))
+
+    def test_headscale_listens_where_caddy_proxies(self):
+        config = (self.DEPLOY / "oracle" / "headscale" / "config.yaml").read_text(encoding="utf-8")
+        caddy = (self.DEPLOY / "oracle" / "Caddyfile").read_text(encoding="utf-8")
+        listen = re.search(r"^listen_addr: (\S+)", config, re.M).group(1)
+        self.assertIn("reverse_proxy %s" % listen, caddy)
+        self.assertIn("http://%s/health" % listen, self.SETUP)
+
+
 if __name__ == "__main__":
     unittest.main()
