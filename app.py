@@ -203,9 +203,11 @@ class Store:
 
 def timezone_name():
     """The server's IANA time zone (e.g. Asia/Kolkata), or its abbreviation (e.g. IST) if unknown."""
+    # TZ, when set, is what the process actually uses, so it wins: "UTC", "Europe/London",
+    # or a file path such as ":/usr/share/zoneinfo/Asia/Kolkata".
     tz = os.environ.get("TZ", "").lstrip(":")
-    if tz and "/" in tz:
-        return tz
+    if tz:
+        return tz.split("zoneinfo/", 1)[1] if "zoneinfo/" in tz else tz
     try:
         name = Path("/etc/timezone").read_text(encoding="utf-8").strip()  # Debian / Raspberry Pi OS
         if name:

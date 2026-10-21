@@ -242,6 +242,10 @@ class MonitorTests(TempDB):
     def test_timezone_name_sources(self):
         with mock.patch.dict(app.os.environ, {"TZ": "Europe/London"}):
             self.assertEqual(app.timezone_name(), "Europe/London")
+        with mock.patch.dict(app.os.environ, {"TZ": "UTC"}):   # no "/" must still win over the system zone
+            self.assertEqual(app.timezone_name(), "UTC")
+        with mock.patch.dict(app.os.environ, {"TZ": ":/usr/share/zoneinfo/Asia/Tokyo"}):
+            self.assertEqual(app.timezone_name(), "Asia/Tokyo")
         with mock.patch.dict(app.os.environ, {"TZ": ""}), \
                 mock.patch.object(app.Path, "read_text", return_value="Asia/Kolkata\n"):
             self.assertEqual(app.timezone_name(), "Asia/Kolkata")

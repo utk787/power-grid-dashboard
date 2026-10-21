@@ -311,9 +311,23 @@ ssh utkarsh@raspberrypi 'sudo systemctl restart powersensor'
   `cd tools/echarts && npm install && npm run build`. Then commit and copy
   `static/echarts.min.js`.
 
-## 8. Clock
+## 8. Clock and time zone
 
-The Pi has no battery-backed clock. After a power cut it boots with the last saved
+**Time zone.** Nothing in the app is tied to a particular zone. Stored times are
+unix seconds, and the dashboard shows each visitor their own local time. The only
+place the machine's zone appears is the `timezone`, `utc_offset` and `*_local`
+fields of `/api/status`. The app detects the zone at startup, in this order:
+
+1. The `TZ` environment variable, if set.
+2. `/etc/timezone`.
+3. The `/etc/localtime` link.
+4. The zone abbreviation, e.g. `IST`.
+
+On a new machine, set its zone with `sudo timedatectl set-timezone Area/City` and
+check it with `timedatectl`. Restart the service after changing it, because the zone
+is read once at startup.
+
+**Clock.** The Pi has no battery-backed clock. After a power cut it boots with the last saved
 time and corrects it once NTP syncs, which needs internet. Timestamps written before
 sync can be off, mainly the end of a "likely outage" recorded at startup.
 
