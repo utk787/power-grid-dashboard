@@ -180,13 +180,20 @@ const tf = new Intl.DateTimeFormat([], {hour: 'numeric', minute: '2-digit'});
 const hf = new Intl.DateTimeFormat([], {hour: 'numeric'});
 const df = new Intl.DateTimeFormat([], {weekday: 'short', day: 'numeric', month: 'short'});
 const sdf = new Intl.DateTimeFormat([], {day: 'numeric', month: 'short'});
+// Same, with the year; used when a date isn't in the current year (history goes back years).
+const dfY = new Intl.DateTimeFormat([], {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
+const sdfY = new Intl.DateTimeFormat([], {day: 'numeric', month: 'short', year: 'numeric'});
+const sdfYY = new Intl.DateTimeFormat([], {day: 'numeric', month: 'short', year: '2-digit'});
+const thisYear = ts => new Date(ts * 1000).getFullYear() === new Date(now() * 1000).getFullYear();
+const longDate = ts => (thisYear(ts) ? df : dfY).format(ts * 1000);     // "Sun 18 Oct" / "Sat 18 Oct 2025"
+const shortDate = ts => (thisYear(ts) ? sdf : sdfY).format(ts * 1000);  // "18 Oct" / "18 Oct 2025"
 const time = ts => tf.format(ts * 1000);
 const hourName = h => hf.format(new Date(2024, 0, 1, h));
 function dayName(ts) {
   const t = midnight(now()), m = midnight(ts);
   if (m === t) return 'Today';
   if (m === addDays(t, -1)) return 'Yesterday';
-  return df.format(ts * 1000);
+  return longDate(ts);
 }
 const when = ts => (midnight(ts) === midnight(now()) ? '' : dayName(ts) + ', ') + time(ts);
 
@@ -203,7 +210,7 @@ const buckets = () => PS.buckets(W.from, W.to);
 // Wording and labels for the bucket size the window uses (15 min / hour / day).
 const UNIT = {quarter: ['15 minutes', 'each 15 minutes', 'a period', '15-minute'], hour: ['hour', 'each hour', 'an hour', 'Hourly'],
               day: ['day', 'each day', 'a day', 'Daily']};
-const bucketLabel = (unit, a) => unit === 'day' ? sdf.format(a * 1000) : unit === 'hour' ? hourName(new Date(a * 1000).getHours()) : time(a);
+const bucketLabel = (unit, a) => unit === 'day' ? (thisYear(a) ? sdf : sdfYY).format(a * 1000) : unit === 'hour' ? hourName(new Date(a * 1000).getHours()) : time(a);
 const bucketTitle = (unit, a, b) => unit === 'day' ? dayName(a) : dayName(a) + ', ' + time(a) + '–' + time(b);
 function renderLabels() {
   const [per, each, one, adj] = UNIT[buckets().unit];
@@ -229,7 +236,7 @@ function renderHero() {
       s1 = 'Last outage ended ' + (midnight(last[1]) === midnight(t) ? 'today at ' + time(last[1]) : when(last[1])) + ' · lasted ' + dur(last[1] - last[0]);
       s2 = 'On for ' + dur(t - last[1]);
     } else {
-      s1 = 'No outages recorded'; s2 = 'Monitoring since ' + df.format(S.tracking_since * 1000);
+      s1 = 'No outages recorded'; s2 = 'Monitoring since ' + dfY.format(S.tracking_since * 1000);
     }
   } else if (S.state === 'off') {
     cls = 'off'; icon = '⏻'; h = 'Power is OUT'; title = '🔴 Power OUT';
@@ -268,7 +275,7 @@ function renderStats() {
     return t;
   }));
   renderLabels();
-  const fmt = ts => sdf.format(ts * 1000) + (W.to - W.from <= 2 * 86400 ? ' ' + time(ts) : '');
+  const fmt = ts => sdfY.format(ts * 1000) + (W.to - W.from <= 2 * 86400 ? ' ' + time(ts) : '');  // always with the year
   $('win').textContent = 'Showing ' + fmt(W.from) + ' → ' + (W.live ? 'now' : fmt(W.to));
 }
 
@@ -319,7 +326,7 @@ function renderList() {
     m.id = 'more'; m.onclick = () => { listLimit += 100; renderList(); };
     list.append(m);
   }
-  $('foot').textContent = 'Checks every ' + S.poll + 's · history since ' + df.format(dataStart() * 1000);
+  $('foot').textContent = 'Checks every ' + S.poll + 's · history since ' + dfY.format(dataStart() * 1000);
 }
 
 // ---------- charts (ECharts, loaded after first paint) ----------
@@ -351,7 +358,7 @@ function stepPoints() {
     .map(p => [p[0] * 1000, p[1]]);
 }
 function showZoom() {
-  const z = stepZoom, fmt = ts => (W.to - W.from > 86400 ? sdf.format(ts * 1000) + ' ' : '') + time(ts);
+  const z = stepZoom, fmt = ts => (W.to - W.from > 86400 ? shortDate(ts) + ' ' : '') + time(ts);
   $('zoom-reset').hidden = !z;
   $('zoom-reset').textContent = z ? 'Reset zoom (' + fmt(z[0]) + ' – ' + fmt(z[1]) + ')' : 'Reset zoom';
 }
@@ -509,7 +516,9 @@ const charts = {
         left: horiz ? 36 : 'center',
         splitLine: {show: false}, itemStyle: {color: C.bar, borderColor: C.card, borderWidth: 2},
         dayLabel: {firstDay: 1, color: C.muted, fontSize: 10, nameMap: [...Array(7)].map((_, i) => wd.format(new Date(2024, 0, 7 + i)))},
-        monthLabel: {color: C.muted, fontSize: 11, nameMap: [...Array(12)].map((_, i) => mf.format(new Date(2024, i, 1)))},
+        // Months outside the current year get it appended ("Oct '25"), since the grid can span two years.
+        monthLabel: {color: C.muted, fontSize: 11, formatter: p => mf.format(new Date(+p.yyyy, +p.M - 1, 1)) +
+          (+p.yyyy === new Date(now() * 1000).getFullYear() ? '' : " '" + String(p.yyyy).slice(2))},
         yearLabel: {show: false}},
       series: [{type: 'heatmap', coordinateSystem: 'calendar', data}],
     });
