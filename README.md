@@ -48,10 +48,11 @@ python3 -m unittest tests.test_app -v   # backend only
 node --test tests/frontend/   # frontend logic only
 ```
 
-There are four suites, and none need packages installed:
+There are five suites, and none need packages installed:
 
 - **Backend:** 62 Python `unittest` tests, covering config loading
 - **Backfill tool:** 14 Python tests for importing the old logger's files
+- **API docs:** 5 Python tests that keep `docs/openapi.yaml` and `docs/API.md` in step with the server's routes
 - **Frontend logic:** 28 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
@@ -67,6 +68,8 @@ what's covered.
   troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, data
   model, HTTP API (including `/api/outages/range` for querying up to a week of outages), frontend design, failure modes, design decisions
+- [docs/API.md](docs/API.md): every API endpoint with example requests and responses;
+  machine-readable spec in [docs/openapi.yaml](docs/openapi.yaml) (OpenAPI 3.1)
 - [docs/TESTING.md](docs/TESTING.md): running the tests locally, what each suite
   covers, adding tests
 
@@ -82,5 +85,5 @@ tests/                 backend, frontend logic and browser smoke tests
 tools/backfill_logs.py imports old power-status*.log history (see the admin guide)
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
-docs/                  architecture, administration and testing guides
+docs/                  architecture, administration, testing and API guides; OpenAPI spec
 ```

@@ -1,6 +1,6 @@
 # Testing
 
-The project has four test suites. None of them need any packages installed: they use
+The project has five test suites. None of them need any packages installed: they use
 Python's built-in `unittest`, Node's built-in `node:test`, and an optional local
 Chrome. No test talks to the real sensor or the internet. Everything runs against
 throwaway databases and servers on `127.0.0.1`.
@@ -10,6 +10,7 @@ throwaway databases and servers on `127.0.0.1`.
 | **Backend** | 62 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API (including the 7-day range query) | `python3 -m unittest` | `tests/test_app.py` |
 | **Frontend logic** | 28 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
 | **Backfill tool** | 14 | `tools/backfill_logs.py`: log parsing, merging, outage rules, safe and repeatable import, short write locks, SQL file = direct import | `python3 -m unittest` | `tests/test_backfill.py` |
+| **API docs** | 5 | `docs/openapi.yaml` and `docs/API.md` list exactly the routes the server answers; the static file list and 7-day limit match the code | `python3 -m unittest` | `tests/test_docs.py` |
 | **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
 ## Requirements
@@ -28,7 +29,7 @@ From the repository root:
 tests/run.sh
 ```
 
-This runs all four suites and exits non-zero if anything fails. If Node isn't
+This runs all five suites and exits non-zero if anything fails. If Node isn't
 installed, the frontend logic tests are skipped with a message. If Chrome isn't
 found, the smoke tests are reported as skipped.
 
@@ -39,6 +40,7 @@ python3 -m unittest tests.test_app -v        # backend only (fast, ~2 s)
 python3 -m unittest tests.test_app.ConfigTests -v   # just the config-file tests
 node --test tests/frontend/                  # frontend logic only (<1 s)
 python3 -m unittest tests.test_backfill -v   # backfill tool (<1 s)
+python3 -m unittest tests.test_docs -v       # API docs match the server's routes
 python3 -m unittest tests.test_smoke -v      # browser smoke tests (~10 s)
 python3 -m unittest discover -s tests -v     # backend + smoke together
 ```
@@ -201,6 +203,24 @@ Builds small `power-status*.log` files covering each case seen in the real logs:
 - **SQL file:** applying the generated file with the `sqlite3` tool, twice, gives
   exactly the same database as the direct import. This test is skipped if `sqlite3`
   isn't installed.
+
+### API docs (`tests/test_docs.py`)
+
+Reads `app.py`, `docs/openapi.yaml` and `docs/API.md` as text, with no YAML parser
+needed:
+
+- **Routes:** the spec's paths are **exactly** the routes the request handler
+  answers, so adding an endpoint without documenting it fails the test. Every route
+  has a section in `API.md`.
+- **Spec basics:** the spec is OpenAPI 3.1, with an `operationId` for every path.
+- **Matches the code:** the static files listed are the ones in `static/`, and the
+  7-day limit in the spec matches `MAX_QUERY_RANGE`.
+
+The full structure of the spec was also validated with `openapi-spec-validator`, and
+every example and live response was checked against its schemas with `jsonschema`.
+That needs packages, so it isn't part of the suite:
+`pip install openapi-spec-validator pyyaml jsonschema` in a virtualenv, then
+`python -c "import yaml, openapi_spec_validator as v; v.validate(yaml.safe_load(open('docs/openapi.yaml')))"`.
 
 ### Browser smoke (`tests/test_smoke.py`)
 

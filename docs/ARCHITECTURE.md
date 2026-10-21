@@ -181,6 +181,10 @@ minute. A year with three outages a day is roughly 2–3 k rows per table, well 
 
 ## HTTP interface
 
+For callers of the API, [API.md](API.md) has every endpoint with example requests and
+responses, and [openapi.yaml](openapi.yaml) is the OpenAPI 3.1 spec. This section
+covers how the server implements them.
+
 | Route | Response | Cache-Control |
 |---|---|---|
 | `GET /` | `index.html` with `{{BOOT}}` replaced by JSON: `status` (a `/api/status` snapshot), `outages` (all rows), `echarts` (versioned script URL) | `no-store` |

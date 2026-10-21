@@ -1,0 +1,430 @@
+openapi: 3.1.0
+info:
+  title: Power Grid Dashboard API
+  version: "1.0.0"
+  summary: Read-only API for mains power status and outage history.
+  description: |
+    Served by `app.py` alongside the dashboard. There is no authentication and nothing
+    can be changed through the API. Only `GET` and `HEAD` are supported.
+
+    **Timestamps** are Unix seconds: exact moments, whatever the time zone. History
+    imported from the old logger has millisecond fractions. Fields ending in `_local`
+    hold the same moment as ISO 8601 in the server's local time, including the UTC
+    offset.
+
+    Every API response is `Cache-Control: no-store`. Responses over 512 bytes are
+    gzip-compressed when the client sends `Accept-Encoding: gzip`.
+
+    Human-readable guide with examples: [API.md](API.md).
+  license:
+    name: See repository
+servers:
+  - url: http://192.168.1.201:8080
+    description: Raspberry Pi on the LAN
+  - url: /
+    description: Same origin as the dashboard
+
+tags:
+  - name: status
+    description: Current power state
+  - name: history
+    description: Outages and raw sensor readings
+  - name: service
+    description: Health check, the dashboard page and its static files
+
+paths:
+  /api/status:
+    get:
+      tags: [status]
+      operationId: getStatus
+      summary: Current power state
+      description: The dashboard polls this every 10 seconds.
+      responses:
+        "200":
+          description: Current state, when it began, the last sensor check and the server's time zone.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+              examples:
+                outage:
+                  summary: Power is out
+                  value:
+                    state: "off"
+                    since: 1792556598
+                    checked: 1792561066
+                    now: 1792561071
+                    tracking_since: 1743191163
+                    poll: 5.0
+                    v: 3
+                    timezone: Asia/Kolkata
+                    utc_offset: "+05:30"
+                    since_local: "2026-10-21T09:53:18+05:30"
+                    checked_local: "2026-10-21T11:07:46+05:30"
+                    now_local: "2026-10-21T11:07:51+05:30"
+                justStarted:
+                  summary: App just started, no check yet
+                  value:
+                    state: unknown
+                    since: 1792578000
+                    checked: null
+                    now: 1792578001
+                    tracking_since: 1743191163
+                    poll: 5.0
+                    v: 0
+                    timezone: Asia/Kolkata
+                    utc_offset: "+05:30"
+                    since_local: "2026-10-21T15:50:00+05:30"
+                    checked_local: null
+                    now_local: "2026-10-21T15:50:01+05:30"
+
+  /api/outages:
+    get:
+      tags: [history]
+      operationId: listOutages
+      summary: Outages from the last N days (compact)
+      description: |
+        Newest first. An outage is included if it ended within the period or is still
+        ongoing. At most 20,000 rows. This is the dashboard's own feed. For readable
+        output or a specific window, use `/api/outages/range`.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Days back from now. `0` returns all history. Clamped to 0–3650; a non-number falls back to 30.
+          schema: {type: integer, default: 30, minimum: 0, maximum: 3650}
+          example: 1
+      responses:
+        "200":
+          description: Outages as compact rows.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [days, outages]
+                properties:
+                  days: {type: integer, description: The `days` value actually used.}
+                  outages:
+                    type: array
+                    items: {$ref: "#/components/schemas/OutageRow"}
+              example:
+                days: 1
+                outages:
+                  - [1792556598, null, 0]
+                  - [1792510787, 1792511461, 1]
+
+  /api/outages/range:
+    get:
+      tags: [history]
+      operationId: getOutagesInRange
+      summary: Outages overlapping a window of at most 7 days
+      description: |
+        Outages that overlap `[from, to)`, oldest first, including one that started
+        before `from` or is still ongoing. Each comes with local times, its full length
+        and the part inside the window. The window may be **at most 7 days (604,800 s)**;
+        a longer window gets `400`.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema: {$ref: "#/components/schemas/TimeInput"}
+          examples:
+            iso: {summary: ISO 8601 with offset, value: "2026-10-19T08:00+05:30"}
+            date: {summary: Local date (midnight), value: "2026-10-19"}
+            unix: {summary: Unix seconds, value: "1792377000"}
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive. Must be after `from` and at most 7 days later.
+          schema: {$ref: "#/components/schemas/TimeInput"}
+          examples:
+            iso: {summary: ISO 8601 with offset, value: "2026-10-19T14:00+05:30"}
+            date: {summary: Local date (midnight), value: "2026-10-20"}
+            unix: {summary: Unix seconds, value: "1792398600"}
+      responses:
+        "200":
+          description: Outages overlapping the window, with totals.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OutageRange"}
+              example:
+                from: 1792377000.0
+                to: 1792398600.0
+                from_local: "2026-10-19T08:00:00+05:30"
+                to_local: "2026-10-19T14:00:00+05:30"
+                timezone: Asia/Kolkata
+                max_range_s: 604800
+                count: 2
+                total_outage_s: 3144.681
+                outages:
+                  - start: 1792380529.805
+                    end: 1792383633.268
+                    start_local: "2026-10-19T08:58:49+05:30"
+                    end_local: "2026-10-19T09:50:33+05:30"
+                    ongoing: false
+                    approximate: false
+                    duration_s: 3103.463
+                    in_range_s: 3103.463
+                  - start: 1792383905.765
+                    end: 1792383946.983
+                    start_local: "2026-10-19T09:55:05+05:30"
+                    end_local: "2026-10-19T09:55:46+05:30"
+                    ongoing: false
+                    approximate: false
+                    duration_s: 41.218
+                    in_range_s: 41.218
+        "400":
+          description: The window is over 7 days, a time is missing or unreadable, or `to` is not after `from`.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RangeError"}
+              examples:
+                tooLarge:
+                  summary: More than 7 days
+                  value:
+                    error: "time range too large: 8.00 days requested, at most 7 days (604800 s) allowed; query a longer period in several smaller ranges"
+                    max_range_s: 604800
+                missing:
+                  summary: Parameter missing
+                  value:
+                    error: "missing 'to' (unix seconds or ISO 8601, e.g. 2026-10-14, 2026-10-14T09:00 or 2026-10-14T09:00+05:30)"
+                    max_range_s: 604800
+                notATime:
+                  summary: Unreadable time
+                  value:
+                    error: "'from' is not a time: 'yesterday' (unix seconds or ISO 8601, e.g. 2026-10-14, 2026-10-14T09:00 or 2026-10-14T09:00+05:30)"
+                    max_range_s: 604800
+                reversed:
+                  summary: "`to` not after `from`"
+                  value:
+                    error: "'to' must be after 'from'"
+                    max_range_s: 604800
+
+  /api/readings:
+    get:
+      tags: [history]
+      operationId: listReadings
+      summary: Raw sensor log (every On/Off change)
+      description: |
+        One row each time the check result changed, including blips too short to count
+        as outages. Oldest first, at most 100,000 rows. Times must be Unix seconds
+        (integers); ISO dates are not accepted here.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Start, inclusive. Defaults to `to` minus 24 hours.
+          schema: {type: integer, minimum: 0}
+          example: 1792380000
+        - name: to
+          in: query
+          required: false
+          description: End, inclusive. Defaults to now.
+          schema: {type: integer, minimum: 0}
+          example: 1792390000
+      responses:
+        "200":
+          description: The readings in the range.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, readings]
+                properties:
+                  from: {type: integer}
+                  to: {type: integer}
+                  readings:
+                    type: array
+                    items: {$ref: "#/components/schemas/ReadingRow"}
+              example:
+                from: 1792380000
+                to: 1792390000
+                readings:
+                  - [1792380529.805, 0]
+                  - [1792383633.268, 1]
+                  - [1792383700.67, 0]
+                  - [1792383707.284, 1]
+        "400":
+          description: "`from` or `to` is not an integer."
+          content:
+            text/plain:
+              schema: {type: string}
+              example: from/to must be unix seconds
+
+  /healthz:
+    get:
+      tags: [service]
+      operationId: health
+      summary: Web server health check
+      description: Only proves the web server is up. To check that sensor checks are happening, see `checked` in `/api/status`.
+      responses:
+        "200":
+          description: The server is up.
+          content:
+            text/plain:
+              schema: {type: string, const: ok}
+              example: ok
+
+  /:
+    get:
+      tags: [service]
+      operationId: dashboard
+      summary: The dashboard page
+      description: HTML with the current status and full outage history embedded, so it renders from one request.
+      responses:
+        "200":
+          description: The dashboard.
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            text/html:
+              schema: {type: string}
+
+  /static/{file}:
+    get:
+      tags: [service]
+      operationId: staticFile
+      summary: Static files used by the page
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema: {type: string, enum: [echarts.min.js, core.js]}
+      responses:
+        "200":
+          description: The file, gzip-compressed if accepted; cached for a year (the page versions the URL with `?v=`).
+          headers:
+            Cache-Control:
+              description: Long-lived, immutable cache.
+              schema: {type: string, const: "public, max-age=31536000, immutable"}
+          content:
+            application/javascript:
+              schema: {type: string}
+        "404":
+          description: No such file.
+          content:
+            text/plain:
+              schema: {type: string}
+              example: not found
+
+components:
+  headers:
+    NoStore:
+      description: API responses are never cached.
+      schema: {type: string, const: no-store}
+
+  schemas:
+    UnixTime:
+      type: number
+      description: Unix seconds; may have a millisecond fraction for imported history.
+      examples: [1792380529.805]
+
+    LocalTime:
+      type: string
+      format: date-time
+      description: ISO 8601 in the server's local time, with its UTC offset.
+      examples: ["2026-10-19T08:58:49+05:30"]
+
+    TimeInput:
+      type: string
+      description: |
+        Unix seconds (`1792377000`) or ISO 8601: `2026-10-19`, `2026-10-19T08:00`,
+        `2026-10-19 08:00:00`, `2026-10-19T08:00+05:30` or `2026-10-19T02:30Z`. Without
+        an offset it's the server's local time. In a URL, `+` must be encoded as `%2B`.
+
+    Status:
+      type: object
+      required: [state, since, checked, now, tracking_since, poll, v, timezone, utc_offset, since_local, checked_local, now_local]
+      properties:
+        state:
+          type: string
+          enum: ["on", "off", unknown]
+          description: "`unknown` until the first decision after startup."
+        since:
+          $ref: "#/components/schemas/UnixTime"
+          description: When the current state began (end of the last outage when on, the outage start when off).
+        checked:
+          type: [number, "null"]
+          description: Last sensor check; null before the first one. Stale (over about 30 s old) means the monitor isn't checking.
+        now: {type: integer, description: The server's clock.}
+        tracking_since: {type: integer, description: Start of the recorded history.}
+        poll: {type: number, description: Seconds between sensor checks.}
+        v: {type: integer, description: Changes whenever an outage is added or ends; re-fetch outages when it does.}
+        timezone: {type: string, description: "The server's IANA time zone (e.g. Asia/Kolkata), or an abbreviation if unknown."}
+        utc_offset: {type: string, pattern: "^[+-]\\d\\d:\\d\\d$", description: Current UTC offset.}
+        since_local: {$ref: "#/components/schemas/LocalTime"}
+        checked_local:
+          oneOf:
+            - {$ref: "#/components/schemas/LocalTime"}
+            - {type: "null"}
+        now_local: {$ref: "#/components/schemas/LocalTime"}
+
+    OutageRow:
+      type: array
+      description: "`[start, end, approximate]`. `end` is null while ongoing; `approximate` is 1 when the start was estimated (the monitor itself was offline)."
+      prefixItems:
+        - {$ref: "#/components/schemas/UnixTime"}
+        - type: [number, "null"]
+        - {type: integer, enum: [0, 1]}
+      minItems: 3
+      maxItems: 3
+
+    ReadingRow:
+      type: array
+      description: "`[ts, ok]`: from `ts` on, the sensor answered Mains On (`1`) or didn't (`0`), until the next row."
+      prefixItems:
+        - {$ref: "#/components/schemas/UnixTime"}
+        - {type: integer, enum: [0, 1]}
+      minItems: 2
+      maxItems: 2
+
+    Outage:
+      type: object
+      required: [start, end, start_local, end_local, ongoing, approximate, duration_s, in_range_s]
+      properties:
+        start: {$ref: "#/components/schemas/UnixTime"}
+        end:
+          type: [number, "null"]
+          description: Null while the outage is ongoing.
+        start_local: {$ref: "#/components/schemas/LocalTime"}
+        end_local:
+          oneOf:
+            - {$ref: "#/components/schemas/LocalTime"}
+            - {type: "null"}
+        ongoing: {type: boolean}
+        approximate: {type: boolean, description: The start was estimated because the monitor itself was offline.}
+        duration_s: {type: number, description: Full length of the outage (up to now if ongoing).}
+        in_range_s: {type: number, description: The part of the outage inside the requested window.}
+
+    OutageRange:
+      type: object
+      required: [from, to, from_local, to_local, timezone, max_range_s, count, total_outage_s, outages]
+      properties:
+        from: {$ref: "#/components/schemas/UnixTime"}
+        to: {$ref: "#/components/schemas/UnixTime"}
+        from_local: {$ref: "#/components/schemas/LocalTime"}
+        to_local: {$ref: "#/components/schemas/LocalTime"}
+        timezone: {type: string}
+        max_range_s: {type: integer, const: 604800}
+        count: {type: integer, minimum: 0}
+        total_outage_s: {type: number, description: Seconds without power inside the window (sum of in_range_s).}
+        outages:
+          type: array
+          items: {$ref: "#/components/schemas/Outage"}
+
+    RangeError:
+      type: object
+      required: [error, max_range_s]
+      properties:
+        error: {type: string, description: What was wrong with the request.}
+        max_range_s: {type: integer, const: 604800}
