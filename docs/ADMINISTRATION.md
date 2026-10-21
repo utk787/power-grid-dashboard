@@ -246,8 +246,11 @@ sudo ./setup-vm.sh power-greenpark.duckdns.org "ssh-ed25519 AAAA...  powersensor
 
 The script is safe to run again. It:
 - installs Caddy and opens 80/443 in the VM's firewall;
-- creates a `tunnel` user that can **only** forward `127.0.0.1:18080` (no shell, no
-  other ports);
+- creates a `tunnel` user for the Pi's key. sshd lets it do **only** one thing:
+  publish the Pi's dashboard on `127.0.0.1:18080` (reverse forwarding). Outbound
+  forwarding is refused, so a stolen key can't use the VM to reach other hosts, and
+  there's no shell or terminal. The script checks sshd's effective settings, and stops
+  if the restrictions didn't apply or leaked to other users;
 - makes sshd drop dead tunnel sessions within about 90 s;
 - installs the site and checks the config.
 

@@ -7,8 +7,9 @@
 # What it does (safe to run again):
 #   1. installs Caddy (HTTPS reverse proxy; gets and renews the certificate itself)
 #   2. opens ports 80 and 443 in the VM's own firewall (Oracle's Ubuntu images block them)
-#   3. creates a 'tunnel' user that may ONLY forward 127.0.0.1:18080 (no shell, no other ports)
-#   4. makes sshd drop dead tunnel sessions quickly, so the Pi can reconnect after an outage
+#   3. creates a 'tunnel' user for the Pi's key
+#   4. sshd: that user may ONLY publish the Pi on 127.0.0.1:18080 (ssh -R); outbound forwarding,
+#      shell, terminal and agent are refused; dead tunnel sessions are dropped within ~90 s
 #   5. installs the Caddyfile for <domain> and the "monitor offline" page, then reloads Caddy
 #
 # Also needed (done in the Oracle console, not here): ingress rules for TCP 80 and 443 in the
@@ -62,15 +63,39 @@ printf 'restrict,port-forwarding,permitlisten="127.0.0.1:%s" %s\n' "$TUNNEL_PORT
 chown tunnel:tunnel /home/tunnel/.ssh/authorized_keys
 chmod 600 /home/tunnel/.ssh/authorized_keys
 
-echo "== 4. sshd: drop dead sessions within ~90 s"
+echo "== 4. sshd: lock the tunnel user down; drop dead sessions within ~90 s"
 mkdir -p /etc/ssh/sshd_config.d
-cat > /etc/ssh/sshd_config.d/powersensor-tunnel.conf <<'EOF'
-# Added by powersensor setup-vm.sh: when the Pi's link dies (power or internet out at home),
-# close its session quickly so the forwarded port is free when the Pi reconnects.
+cat > /etc/ssh/sshd_config.d/powersensor-tunnel.conf <<EOF
+# Added by powersensor setup-vm.sh.
+# When the Pi's link dies (power or internet out at home), close its session quickly so the
+# forwarded port is free when the Pi reconnects.
 ClientAliveInterval 30
 ClientAliveCountMax 3
+
+# The tunnel key may only publish the Pi's dashboard on 127.0.0.1:$TUNNEL_PORT (ssh -R). Outbound
+# forwarding (ssh -L / -D) is refused, so a stolen key can't use this VM to reach other hosts
+# (e.g. the cloud metadata service). No shell, terminal, agent or X11 either.
+Match User tunnel
+    AllowTcpForwarding remote
+    PermitListen 127.0.0.1:$TUNNEL_PORT
+    PermitOpen none
+    GatewayPorts no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    ForceCommand /usr/sbin/nologin
+# End the Match block here, so nothing read after this file (e.g. the main sshd_config) is
+# applied only to the tunnel user.
+Match all
 EOF
 sshd -t
+# Check the effective settings: locked down for 'tunnel', unchanged for everyone else.
+eff_tunnel="$(sshd -T -C user=tunnel,host=localhost,addr=127.0.0.1)"
+eff_other="$(sshd -T -C user=ubuntu,host=localhost,addr=127.0.0.1)"
+grep -qx "allowtcpforwarding remote" <<<"$eff_tunnel" || die "sshd didn't apply the tunnel restrictions (allowtcpforwarding)"
+grep -qx "permitopen none" <<<"$eff_tunnel" || die "sshd didn't apply the tunnel restrictions (permitopen)"
+grep -qx "permitlisten 127.0.0.1:$TUNNEL_PORT" <<<"$eff_tunnel" || die "sshd didn't apply the tunnel restrictions (permitlisten)"
+grep -qx "forcecommand /usr/sbin/nologin" <<<"$eff_other" && die "tunnel restrictions leaked to other users; check /etc/ssh/sshd_config.d"
 systemctl reload ssh 2>/dev/null || systemctl reload sshd
 
 echo "== 5. Caddy site for $DOMAIN"
