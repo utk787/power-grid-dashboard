@@ -1,14 +1,15 @@
 # Testing
 
-The project has three test suites. None of them need any packages installed: they use
+The project has four test suites. None of them need any packages installed: they use
 Python's built-in `unittest`, Node's built-in `node:test`, and an optional local
 Chrome. No test talks to the real sensor or the internet. Everything runs against
 throwaway databases and servers on `127.0.0.1`.
 
 | Suite | Tests | What it covers | Tool | File(s) |
 |---|---|---|---|---|
-| **Backend** | 57 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
+| **Backend** | 58 | Config file loading, SQLite store, outage state machine, sensor check, HTTP API | `python3 -m unittest` | `tests/test_app.py` |
 | **Frontend logic** | 26 | Date bucketing, stats and chart data in `static/core.js`, including time zone and DST cases | `node --test` | `tests/frontend/core.test.js` |
+| **Backfill tool** | 14 | `tools/backfill_logs.py`: log parsing, merging, outage rules, safe and repeatable import, short write locks, SQL file = direct import | `python3 -m unittest` | `tests/test_backfill.py` |
 | **Browser smoke** | 6 | The real page in headless Chrome, desktop and phone layouts: every chart draws, no JS errors, correct status text, phone tabs | `python3 -m unittest` + Chrome | `tests/test_smoke.py` |
 
 ## Requirements
@@ -27,7 +28,7 @@ From the repository root:
 tests/run.sh
 ```
 
-This runs all three suites and exits non-zero if anything fails. If Node isn't
+This runs all four suites and exits non-zero if anything fails. If Node isn't
 installed, the frontend logic tests are skipped with a message. If Chrome isn't
 found, the smoke tests are reported as skipped.
 
@@ -37,6 +38,7 @@ found, the smoke tests are reported as skipped.
 python3 -m unittest tests.test_app -v        # backend only (fast, ~2 s)
 python3 -m unittest tests.test_app.ConfigTests -v   # just the config-file tests
 node --test tests/frontend/                  # frontend logic only (<1 s)
+python3 -m unittest tests.test_backfill -v   # backfill tool (<1 s)
 python3 -m unittest tests.test_smoke -v      # browser smoke tests (~10 s)
 python3 -m unittest discover -s tests -v     # backend + smoke together
 ```
@@ -116,7 +118,8 @@ machine.
     and a known instant formats as `2026-10-21T09:53:18+05:30` in Asia/Kolkata.
   - The time zone name is found from `TZ`, `/etc/timezone`, the `/etc/localtime`
     link, or the abbreviation fallback.
-  - The polling loop runs and stops promptly.
+  - The polling loop runs and stops promptly, and it survives a "database is locked"
+    error: the next check retries the write.
 - **Sensor check:** `Mains On` counts as power (case-insensitive, matched anywhere
   in the reply). Other text, HTTP errors, timeouts and an unreachable sensor all
   count as no power.
@@ -163,6 +166,32 @@ America/New_York.
     and days.
   - Start-hour counts.
   - Duration group boundaries.
+
+### Backfill tool (`tests/test_backfill.py`)
+
+Builds small `power-status*.log` files covering each case seen in the real logs:
+
+- **Parsing:** millisecond and microsecond timestamps, a fixed `--utc-offset`, NUL
+  padding, blank lines and garbage lines.
+- **Merging:** files are taken in time order whatever their names. An exact
+  duplicate file is skipped, and two loggers running at once merge without repeated
+  rows. Only On/Off changes are kept, with exact times.
+- **Outages:**
+  - The 15 s threshold, with shorter blips kept only as readings.
+  - Logs that end during an outage.
+  - Outages that continue across files and across gaps in the logs.
+- **Import:**
+  - Only data from before the app's first start is imported, and an outage running
+    at that moment is clipped. The app's own rows are untouched.
+  - `tracking_since` moves back and `app_started` is recorded.
+  - Running it twice changes nothing.
+  - `--dry-run` writes nothing, and a database the app has never run against is
+    refused.
+- **Locking:** about 48,000 readings are imported with every write transaction
+  under 0.5 s.
+- **SQL file:** applying the generated file with the `sqlite3` tool, twice, gives
+  exactly the same database as the direct import. This test is skipped if `sqlite3`
+  isn't installed.
 
 ### Browser smoke (`tests/test_smoke.py`)
 

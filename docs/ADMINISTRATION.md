@@ -338,11 +338,85 @@ sync can be off, mainly the end of a "likely outage" recorded at startup.
   `systemd-time-wait-sync`) is possible, but **not recommended**. If the internet is
   down, the dashboard wouldn't start at all.
 
-## 9. Troubleshooting
+## 9. Importing history from the old logger (backfill)
+
+Before this app, a separate logger script wrote `power-status*.log` files, with lines
+like `2025-03-29 01:16:03.639,Mains On`. `tools/backfill_logs.py` imports that
+history into `power.db`, so the dashboard shows it alongside the app's own data. It
+needs only Python 3.10 and runs on the Pi.
+
+**What it imports**
+
+- **readings:** every On/Off change, with the log's **millisecond** timestamp. Short
+  blips are included, so no detail is lost.
+- **outages:** every stretch of `Mains Off` lasting at least 15 s (`--min-outage`).
+  It starts at the first Off line and ends at the next On line, the same rule the app
+  uses. Long stretches are imported like any other; delete any you know were sensor
+  problems (§6).
+- **The time cutoff:** only data from **before the app first started** is imported.
+  That moment is saved in the database as `app_started`, and the app's own records
+  are never touched. An outage still running at that moment is cut off there.
+- **Messy logs:** duplicate files and two loggers running at once are merged by
+  timestamp. Blank padding left by unclean shutdowns is ignored. Gaps where the
+  logger wasn't running are not filled in.
+- **History start:** afterwards the dashboard's "history since" moves back to the
+  first log line.
+
+**Safe while the app runs.** The data is first loaded into a temporary staging table,
+which doesn't lock `power.db`. It's then moved in small transactions with a 0.25 s
+pause between them, so the app never waits long for the write lock. In tests, the
+longest lock held was 0.02 s, and the app kept writing every second throughout.
+Re-running is harmless: rows that already exist are skipped.
+
+**Steps** (on the Pi; adjust the paths to where your logs and the app live):
+
+```bash
+cd /usr/local/smart-home/power-grid-dashboard
+sqlite3 power.db ".backup '/home/utkarsh/power-before-backfill.db'"   # 1. backup (§5)
+
+# 2. dry run: reads the logs and reports what would be imported; writes nothing
+python3 tools/backfill_logs.py /path/to/logs/power-status*.log --db power.db --dry-run
+```
+
+Then choose one way to apply it:
+
+```bash
+# 3a. insert directly (each write transaction is kept under 0.5 s, --max-lock)
+python3 tools/backfill_logs.py /path/to/logs/power-status*.log --db power.db
+
+# 3b. or generate an SQL file (about 1 MB) and apply it with the sqlite3 tool
+python3 tools/backfill_logs.py /path/to/logs/power-status*.log --sql backfill.sql
+sqlite3 power.db < backfill.sql        # prints "backfill done: … outages, … readings"
+```
+
+```bash
+sudo systemctl restart powersensor     # 4. so every open page picks up the new history
+```
+
+Then check the dashboard: choose **All**. The footer should say "history since"
+followed by the first log date.
+
+**Notes**
+
+- **Time zone:** log times are read in the time zone of the machine running the
+  script. If you run it on a machine set to a different zone, add
+  `--utc-offset +05:30` (the zone the logs were written in).
+- **Run time:** reading 2.4 GB / 79 million lines took about 35 s on a laptop. On a
+  Pi 2 expect several minutes. Only the On/Off changes are kept in memory.
+- **The SQL file** batches 500 rows per transaction (`--batch`). If your `sqlite3`
+  build rejects the `.shell sleep` lines (the pauses), delete them; the batches
+  are still small.
+- **Undo:** restore the backup from step 1 (§5). Or delete just the imported rows:
+  `DELETE FROM outages WHERE start < (SELECT v FROM meta WHERE k='app_started');`,
+  then the same for `readings` using `ts`, then set `tracking_since` back to
+  `app_started`.
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Page shows "Status unavailable · Monitor last checked … ago" | Poller stuck or app overloaded | `sudo systemctl restart powersensor`; check the logs |
+| Log says `could not record a check; will retry` | Another process held the database write lock for over 10 s (e.g. an open `sqlite3` session with a transaction) | Finish or close that session. The app keeps polling and retries the write on the next check |
 | Page shows "Can't reach the status server" | Pi, app or tunnel down, or the visitor is offline | `systemctl status powersensor`; check the tunnel (`tailscale funnel status` / Cloudflare dashboard) |
 | Service won't start; log says `config.ini: unknown key …` or `… is invalid; expected …` | Mistake in `config.ini` | Fix the named line (§2), then `sudo systemctl start powersensor` |
 | Settings change has no effect | Config is only read at startup, or the service uses another file via `--config` | `sudo systemctl restart powersensor`; check the "loaded config from" log line for the path |
@@ -353,7 +427,7 @@ sync can be off, mainly the end of a "likely outage" recorded at startup.
 | `sqlite3.OperationalError: database is locked` | A manual `sqlite3` session holds a write transaction open | Finish or exit that session |
 | Wrong times on the page | Visitor's phone time zone, or the Pi clock (see §8) | Times show in each visitor's own time zone by design |
 
-## 10. Uninstall
+## 11. Uninstall
 
 ```bash
 sudo systemctl disable --now powersensor

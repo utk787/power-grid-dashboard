@@ -48,9 +48,10 @@ python3 -m unittest tests.test_app -v   # backend only
 node --test tests/frontend/   # frontend logic only
 ```
 
-There are three suites, and none need packages installed:
+There are four suites, and none need packages installed:
 
-- **Backend:** 57 Python `unittest` tests, covering config loading
+- **Backend:** 58 Python `unittest` tests, covering config loading
+- **Backfill tool:** 14 Python tests for importing the old logger's files
 - **Frontend logic:** 26 Node `node:test` tests, run in UTC+5:30 and DST time zones
 - **Browser smoke:** 6 headless-Chrome tests (desktop and phone layouts) that check every chart renders without
   errors. They skip if Chrome isn't installed
@@ -61,7 +62,8 @@ what's covered.
 ## Docs
 
 - [docs/ADMINISTRATION.md](docs/ADMINISTRATION.md): install, `config.ini` settings,
-  publishing on the internet without a public IP, backups, data fixes, upgrades,
+  publishing on the internet without a public IP, backups, data fixes, importing old
+  logs, upgrades,
   troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, data
   model, HTTP API, frontend design, failure modes, design decisions
@@ -77,6 +79,7 @@ index.html             frontend markup, CSS and rendering JS
 static/core.js         frontend data logic (pure functions, inlined into the page)
 static/echarts.min.js  trimmed ECharts bundle (built from tools/echarts)
 tests/                 backend, frontend logic and browser smoke tests
+tools/backfill_logs.py imports old power-status*.log history (see the admin guide)
 tools/echarts/         bundle build (Node; only needed to change chart types)
 powersensor.service    systemd unit
 docs/                  architecture, administration and testing guides

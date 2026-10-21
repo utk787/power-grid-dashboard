@@ -258,6 +258,29 @@ class MonitorTests(TempDB):
                 mock.patch.object(app.os, "readlink", side_effect=OSError):
             self.assertEqual(app.timezone_name(), time.strftime("%Z"))
 
+    def test_run_loop_survives_a_locked_database(self):
+        m = app.Monitor(self.store)
+        stop, calls = threading.Event(), []
+        real_add = self.store.add_reading
+
+        def flaky_add(ts, ok):  # first write fails as if another process held the lock too long
+            calls.append(ts)
+            if len(calls) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            real_add(ts, ok)
+            stop.set()
+
+        with mock.patch.object(app, "check_sensor", return_value=True), mock.patch.object(app, "POLL_INTERVAL", 0.01), \
+                mock.patch.object(self.store, "add_reading", flaky_add), self.assertLogs("powersensor", "ERROR") as logs:
+            t = threading.Thread(target=m.run, args=(stop,))
+            t.start()
+            t.join(timeout=2)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(len(calls), 2)                      # the next check retried the write
+        self.assertEqual(len(self.readings()), 1)
+        self.assertEqual(m.state, "on")
+        self.assertIn("could not record a check", logs.output[0])
+
     def test_run_loop_polls_and_stops_promptly(self):
         m = app.Monitor(self.store)
         stop = threading.Event()

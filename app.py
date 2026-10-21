@@ -136,7 +136,9 @@ class Store:
     """Single shared SQLite connection; writes are rare so one lock is plenty."""
 
     def __init__(self, path):
-        self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        # timeout: how long a write waits if another process (a manual sqlite3 session, a backfill)
+        # holds the lock; WAL mode means reads never wait.
+        self.db = sqlite3.connect(path, timeout=10, check_same_thread=False, isolation_level=None)
         self.lock = threading.Lock()
         with self.lock:
             self.db.execute("PRAGMA journal_mode=WAL")
@@ -318,7 +320,13 @@ class Monitor:
     def run(self, stop):
         while not stop.is_set():
             t0 = time.monotonic()
-            self.record(check_sensor(), int(time.time()))
+            try:
+                self.record(check_sensor(), int(time.time()))
+            except sqlite3.Error:
+                # e.g. "database is locked" for longer than the timeout. record() changes no state
+                # until its writes succeed, so the next check simply tries again; never let this
+                # kill the polling thread.
+                log.exception("could not record a check; will retry")
             stop.wait(max(0.0, POLL_INTERVAL - (time.monotonic() - t0)))
 
 

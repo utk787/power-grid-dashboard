@@ -44,6 +44,7 @@ flowchart LR
 | `static/core.js` | Pure data logic (bucketing, stats, chart data) with no DOM or clock access. Inlined into the page by the server and `require()`d by the Node tests |
 | `tests/` | Backend, frontend logic and browser smoke tests. See [TESTING.md](TESTING.md) |
 | `static/echarts.min.js` | Trimmed ECharts 5.6.0 bundle (line, bar, heatmap and custom charts; grid, tooltip, slider data-zoom, visual-map, calendar and mark-area components; canvas renderer) |
+| `tools/backfill_logs.py` | Imports the old logger's `power-status*.log` history into `power.db` (see ADMINISTRATION.md §9) |
 | `tools/echarts/` | `package.json` and `entry.js` that build the bundle. Only needed to change chart types; the Pi never needs Node |
 | `powersensor.service` | systemd unit (runs `app.py --config …/config.ini`) |
 
@@ -155,6 +156,7 @@ INDEX readings_ts ON readings(ts)
 meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)
 --   tracking_since  first time the app ever ran (unix s); start of history
 --   alive           last heartbeat (unix s); used to detect monitor downtime
+--   app_started     set by the backfill tool: when the app first ran (imports stop there)
 ```
 
 **Why it never loses data:** only events are stored, never samples or summaries.
@@ -162,6 +164,16 @@ Between two `readings` rows the result was constant, so the table reconstructs t
 sensor result at every poll losslessly while writing only on changes. `outages` is
 the debounced interpretation of the same signal. Per-day totals, heatmaps and uptime
 are all computed at read time, in the browser.
+
+**Imported history:** rows written by `tools/backfill_logs.py` from the old logger's
+files keep the log's **millisecond** timestamps, so `ts`, `start` and `end` can hold
+fractional seconds (SQLite stores them as REAL). The app's own rows are whole
+seconds. Everything that reads these columns treats them as plain numbers.
+
+**Concurrent writers:** the app's connection waits up to 10 s for the write lock. If a
+write still fails (for example, a manual `sqlite3` session holding a transaction
+open), the polling loop logs the error and retries on the next check instead of
+stopping. `record()` updates no state until its writes succeed.
 
 **Write volume:** one row per flip, two writes per outage, and one `meta` upsert per
 minute. A year with three outages a day is roughly 2–3 k rows per table, well under
@@ -325,6 +337,7 @@ mobile page:
 | Wi-Fi router off while mains is on | Indistinguishable from mains off, so it is **recorded as an outage**. Put the router on a UPS |
 | Pi loses power or reboots | Gap longer than 3 minutes → inferred outage from the last heartbeat until the first good check |
 | App crashes | systemd restarts it after 3 s. An open outage stays open and continues |
+| Database locked by another process | The write waits up to 10 s; if it still fails, the check is retried on the next poll and the polling thread keeps running |
 | Short blip (< threshold) | Recorded in `readings` only, not as an outage |
 | Pi clock wrong at boot (no RTC; time is restored from the last saved value until NTP syncs) | Timestamps written before sync can be off. See *Clock* in `ADMINISTRATION.md` |
 | Visitor's browser can't load ECharts | Status, stats and list still work; chart areas show "Loading chart…" |
